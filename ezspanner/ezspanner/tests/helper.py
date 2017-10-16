@@ -32,4 +32,5 @@ class TestModelB(ezspanner.SpannerModel):
 class TestModelC(ezspanner.SpannerModel):
     table_name = 'model_c'
     table_pk = ['id_c']
+    table_parent = TestModelB
     id_c = ezspanner.IntField()

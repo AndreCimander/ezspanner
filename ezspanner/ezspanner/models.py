@@ -5,67 +5,86 @@ import logging
 
 from google.cloud import spanner
 
+from ezspanner.helper import get_valid_instance_from_class
 from .connection import Connection
 from .query import SpannerQueryset
 from .fields import SpannerField
 
 
 class SpannerModelRegistry(object):
+    """
+    Helper class that validates SpannerModels and helps with global operations on all registered models
+    (e.g. create/drop tables).
 
-    registered_models = defaultdict(dict)
+    """
+    registered_models = {}
 
     @classmethod
-    def register(cls, spanner_class, init_priority=None):
+    def register(cls, spanner_class):
         """
 
         :type spanner_class:
         :param spanner_class:
 
-        :type init_priority: int|None
-        :param init_priority: set the init priority, 0 == highest, 9==lowest. If you have parent-child
-        tables you are required to set the parent tables to a higher priority to ensure proper table creation.
-
         """
-        # make sure priority is between 0 and 9, default to 9
-        init_priority = init_priority if init_priority and init_priority <= 9 else 9
-        init_priority = init_priority if init_priority >= 0 else 0
+        spanner_instance = spanner_class()
+        assert isinstance(spanner_instance, SpannerModel)
+        # verify
+        spanner_class.verify_table()
+        cls.registered_models[spanner_class.__name__] = spanner_instance
 
-        assert isinstance(spanner_class(), SpannerModel)
-        cls.registered_models[init_priority][spanner_class.__name__] = spanner_class.__class__
+    @classmethod
+    def get_registered_models_in_correct_order(cls):
+        prio_dict = defaultdict(list)
+        for class_instance in cls.registered_models.values():
+            init_prio = cls._get_prio(class_instance)
+            prio_dict[init_prio].append(class_instance)
+
+        for i in range(0, 10):
+            for o in prio_dict[i]:
+                yield o
+
+    @staticmethod
+    def _get_prio(model_class, i=0):
+        while model_class.table_parent:
+            i += 1
+            model_class = model_class.table_parent
+            if not model_class.table_parent or i >= 9:
+                break
+        return i
+
+    @classmethod
+    def create_table_statements(cls):
+        ddl_statements = []
+        for spanner_class in cls.get_registered_models_in_correct_order():
+            assert isinstance(spanner_class, SpannerModel)
+            ddl_statements.extend(spanner_class.stmt_create_table())
+        return ddl_statements
 
     @classmethod
     def create_tables(cls, connection_id=None):
-        ddl_statements = []
-        for i in range(0, 10):
-            for spanner_class in cls.registered_models[i].values():
-                assert isinstance(spanner_class, SpannerModel)
-                ddl_statements.extend(spanner_class.stmt_create_table())
-
+        ddl_statements = cls.create_table_statements()
         database = Connection.get(connection_id=connection_id)
         database.update_ddl(ddl_statements=ddl_statements).result()
 
     @classmethod
     def drop_tables(cls, connection_id=None):
         ddl_statements = []
-        for i in range(0, 10):
-            for spanner_class in cls.registered_models[i].values():
-                assert isinstance(spanner_class, SpannerModel)
-                ddl_statements.extend(spanner_class.stmt_drop_table())
+        for spanner_class in cls.registered_models.values():
+            assert isinstance(spanner_class, SpannerModel)
+            ddl_statements.extend(spanner_class.stmt_drop_table())
 
         database = Connection.get(connection_id=connection_id)
         database.update_ddl(ddl_statements=ddl_statements).result()
 
 
-def register(init_priority=None):
+def register():
     """
     Decorator that registers a spanner model in the registry.
-
-    :type init_priority: int|None
-    :param init_priority: init priority for parent-child relations. 0 = highest, 9 = lowest priority
     """
 
     def _model_admin_wrapper(spanner_class):
-        SpannerModelRegistry.register(spanner_class, init_priority=init_priority)
+        SpannerModelRegistry.register(spanner_class)
         return spanner_class
 
     return _model_admin_wrapper
@@ -89,12 +108,24 @@ class SpannerModel(object):
             raise ValueError("%s: table_name not defined!")
 
         if not obj.table_pk or not isinstance(obj.table_pk, (list, tuple)):
-            raise ValueError("%s: table_pk must be a list of field names!" % cls.__name__)
+            raise ValueError("%s: table_pk must be field-name-string or  a list of field names!" % cls.__name__)
+
+        if obj.table_parent:
+            get_valid_instance_from_class(obj.table_parent, valid_class_types=(SpannerModel,))
 
         from .fields import SpannerField
         for field in obj.table_pk:
             if not isinstance(getattr(obj, field), SpannerField):
                 raise ValueError("%s: table_pk %s must be valid SpannerFields!" % (cls.__name__, field))
+
+    @classmethod
+    def get_table_name(cls):
+        if cls.table_name:
+            return cls.table_name
+        else:
+            c = cls.__mro__[0]
+            name = c.__module__ + "." + c.__name__
+            return name
 
     #
     # helper methods for create / drop
