@@ -169,14 +169,14 @@ class SpannerModel(object):
             else:
                 parent_table_sql += ' ON DELETE NO ACTION'
 
-        fields_pk = ['`%s`' % f for f in cls.get_field_names_pk()]
+        primary_key_fields = cls.get_field_names_pk()
 
         ddl_statements = [
-            """CREATE TABLE `%(table)s` (\n%(field_definitions)s\n) PRIMARY KEY (\n%(primary_keys)s) %(parent_table_sql)s;""" % {
+            """CREATE TABLE `%(table)s` (\n%(field_definitions)s\n) PRIMARY KEY (\n%(primary_key_fields)s) %(parent_table_sql)s;""" % {
                 'table': cls.Meta.table,
                 'field_definitions': ',\n'.join([field.stmt_create(field_name)
                                                 for field_name, field in fields.items()]),
-                'primary_keys': ', '.join(['`%s`' % f for f in fields_pk]),
+                'primary_key_fields': ', '.join(primary_key_fields),
                 'parent_table_sql': parent_table_sql
             }]
 
@@ -262,13 +262,29 @@ class SpannerModel(object):
         :rtype: OrderedDict[str, SpannerIndex]
         """
         return OrderedDict([
-            (attr_key, getattr(cls, attr_key)) for attr_key in dir(cls)
-            if isinstance(getattr(cls, attr_key), SpannerIndex)
+            (i.name, i) for i in getattr(cls.Meta, 'indices', [])
         ])
 
 
 class SpannerIndex(object):
+    """
 
+    Example usage:
+
+    ```
+    class ExampleModel(ezspanner.SpannerModel):
+        class Meta:
+            table = 'example'
+            pk = ['example_field']
+
+            indices = [
+                # create descending sorted index over id_a that stores additional fields
+                SpannerIndex('index_name', '-id_a', storing=['field_x', 'field_y'])
+            ]
+
+    ```
+
+    """
     def __init__(self, name, fields, **kwargs):
         """
 
@@ -283,7 +299,7 @@ class SpannerIndex(object):
         """
         self.name = name
         self.unique = kwargs.get('unique', False)
-        self.storing = kwargs.get('media_id', [])
+        self.storing = kwargs.get('storing', [])
         self.fields = OrderedDict()
         for field in fields:
             if field[0] == '-':
@@ -314,7 +330,7 @@ class SpannerIndex(object):
         :rtype: unicode
         :returns: create index string
         """
-        fields = ['`%s`%s' % (field_name, field_sort) for field_name, field_sort in self.fields.items()]
+        fields = ['`%s` %s' % (field_name, field_sort) for field_name, field_sort in self.fields.items()]
         return 'CREATE%(unique)s INDEX `%(name)s` ON %(table)s (%(fields)s)%(storing)s;' % {
             'name': self.name,
             'table': model.Meta.table,
@@ -324,5 +340,16 @@ class SpannerIndex(object):
         }
 
 
-class PrimaryIndex(SpannerIndex):
-    pass
+class PrimaryKey(SpannerIndex):
+    """ Special index that acts as primary key, assigned in SpannerModel.Meta.pk. """
+    def __init__(self, fields, **kwargs):
+        name = 'primary'
+        super(PrimaryKey, self).__init__(name, fields, **kwargs)
+
+    def stmt_drop(self, model):
+        # we can't drop primary indices
+        return ''
+
+    def stmt_create(self, model):
+        # we only need a comma separated list of fields
+        return ', '.join(['`%s` %s' % (field_name, field_sort) for field_name, field_sort in self.fields.items()])
