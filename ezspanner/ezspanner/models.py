@@ -29,8 +29,10 @@ class SpannerModelRegistry(object):
         """
         spanner_instance = spanner_class()
         assert isinstance(spanner_instance, SpannerModel)
-        # verify
+
+        # verify model
         spanner_class.verify_table()
+
         cls.registered_models[spanner_class.__name__] = spanner_instance
 
     @classmethod
@@ -46,10 +48,10 @@ class SpannerModelRegistry(object):
 
     @staticmethod
     def _get_prio(model_class, i=0):
-        while model_class.table_parent:
+        while getattr(model_class.Meta, 'parent', False):
             i += 1
-            model_class = model_class.table_parent
-            if not model_class.table_parent or i >= 9:
+            model_class = model_class.Meta.parent
+            if not model_class.Meta.parent or i >= 9:
                 break
         return i
 
@@ -91,37 +93,37 @@ def register():
 
 
 class SpannerModel(object):
-    table_name = ''
-    table_parent = None
-    table_parent_on_delete = 'CASCADE'
-    table_pk = None
-    table_indices = []
 
-    # todo: move to config
-    instance_id = ''
-    database_id = ''
+    class Meta:
+        """ default Meta class with all available attributes. """
+        table = ''
+        pk = None
+        indices = []
+
+        parent = None
+        parent_on_delete = 'CASCADE'
 
     @classmethod
     def verify_table(cls):
         obj = cls()
-        if not obj.table_name:
-            raise ValueError("%s: table_name not defined!")
+        if not hasattr(obj.Meta, 'table') or not obj.Meta.table:
+            raise ValueError("%s: Meta.name not defined!")
 
-        if not obj.table_pk or not isinstance(obj.table_pk, (list, tuple)):
-            raise ValueError("%s: table_pk must be field-name-string or  a list of field names!" % cls.__name__)
+        if not hasattr(obj.Meta, 'pk') or not isinstance(obj.Meta.pk, (list, tuple)):
+            raise ValueError("%s: Meta.pk must be field-name-string or  a list of field names!" % cls.__name__)
 
-        if obj.table_parent:
-            get_valid_instance_from_class(obj.table_parent, valid_class_types=(SpannerModel,))
+        if obj.has_parent():
+            get_valid_instance_from_class(obj.Meta.parent, valid_class_types=(SpannerModel,))
 
         from .fields import SpannerField
-        for field in obj.table_pk:
+        for field in obj.Meta.pk:
             if not isinstance(getattr(obj, field), SpannerField):
                 raise ValueError("%s: table_pk %s must be valid SpannerFields!" % (cls.__name__, field))
 
     @classmethod
     def get_table_name(cls):
-        if cls.table_name:
-            return cls.table_name
+        if cls.Meta.table:
+            return cls.Meta.table
         else:
             c = cls.__mro__[0]
             name = c.__module__ + "." + c.__name__
@@ -155,10 +157,14 @@ class SpannerModel(object):
         parent_table_sql = ''
 
         fields = cls.get_fields()
-        if cls.table_parent:
-            fields = OrderedDict(cls.table_parent.get_fields_pk().items() + fields.items())
-            parent_table_sql = ' INTERLEAVE IN `%(parent_table)s `' % {'parent_table': cls.table_parent.table_name}
-            if cls.table_parent_on_delete == 'CASCADE':
+        if cls.has_parent():
+            fields = OrderedDict(cls.Meta.parent.get_fields_pk().items() + fields.items())
+
+            # build interleave sql
+            parent_table_sql = ' INTERLEAVE IN `%(parent_table)s `' % {'parent_table': cls.Meta.parent.Meta.table}
+
+            # add on delete, default to CASCADE
+            if not hasattr(cls.Meta, 'parent_on_delete') or cls.Meta.parent_on_delete == 'CASCADE':
                 parent_table_sql += ' ON DELETE CASCADE'
             else:
                 parent_table_sql += ' ON DELETE NO ACTION'
@@ -167,7 +173,7 @@ class SpannerModel(object):
 
         ddl_statements = [
             """CREATE TABLE `%(table)s` (\n%(field_definitions)s\n) PRIMARY KEY (\n%(primary_keys)s) %(parent_table_sql)s;""" % {
-                'table': cls.table_name,
+                'table': cls.Meta.table,
                 'field_definitions': ',\n'.join([field.stmt_create(field_name)
                                                 for field_name, field in fields.items()]),
                 'primary_keys': ', '.join(['`%s`' % f for f in fields_pk]),
@@ -182,16 +188,16 @@ class SpannerModel(object):
     @classmethod
     def stmt_drop_table(cls):
         return """DROP TABLE `(%table)s` """ % {
-            'table': cls.table_name,
+            'table': cls.Meta.table,
         }
 
     @classmethod
     def stmt_create_indices(cls):
-        return [index.stmt_create(cls) for index in cls.table_indices]
+        return [index.stmt_create(cls) for index in getattr(cls.Meta, 'indices', [])]
 
     @classmethod
     def stmt_drop_indices(cls):
-        return [index.stmt_drop(cls) for index in cls.table_indices]
+        return [index.stmt_drop(cls) for index in getattr(cls.Meta, 'indices', [])]
 
     @property
     def objects(self):
@@ -200,6 +206,10 @@ class SpannerModel(object):
     #
     # misc helper methods
     #
+
+    @classmethod
+    def has_parent(cls):
+        return hasattr(cls.Meta, 'parent') and cls.Meta.parent
 
     @classmethod
     def get_fields(cls):
@@ -221,16 +231,16 @@ class SpannerModel(object):
         """
         fields = cls.get_fields()
 
-        pk_fields = [(pk, fields[pk]) for pk in cls.table_pk]
-        if cls.table_parent:
-            pk_fields = cls.table_parent.get_fields_pk().items() + pk_fields
+        pk_fields = [(pk, fields[pk]) for pk in cls.Meta.pk]
+        if cls.has_parent():
+            pk_fields = cls.Meta.parent.get_fields_pk().items() + pk_fields
 
         return OrderedDict(pk_fields)
 
     @classmethod
     def get_field_names_pk(cls):
         """
-        Create primary key field list, resolve parent-child relationships.
+        Create primary key field list, resolve parent-child relationships and support ASC/DESC
 
         :rtype: list[str]
         """
@@ -292,7 +302,7 @@ class SpannerIndex(object):
         """
         return 'DROP INDEX `%(name)s` ON %(table)s;' % {
             'name': self.name,
-            'table': model.table_name
+            'table': model.Meta.table
         }
 
     def stmt_create(self, model):
@@ -307,8 +317,12 @@ class SpannerIndex(object):
         fields = ['`%s`%s' % (field_name, field_sort) for field_name, field_sort in self.fields.items()]
         return 'CREATE%(unique)s INDEX `%(name)s` ON %(table)s (%(fields)s)%(storing)s;' % {
             'name': self.name,
-            'table': model.table_name,
+            'table': model.Meta.table,
             'fields': ', '.join(fields),
             'unique': ' UNIQUE' if self.unique else '',
             'storing': '' if not self.storing else ' STORING(%s)' % ', '.join(['`%s`' % f for f in self.storing]),
         }
+
+
+class PrimaryIndex(SpannerIndex):
+    pass
