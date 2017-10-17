@@ -147,27 +147,30 @@ class SpannerModel(object):
     def stmt_create_table(cls, include_indices=True):
         """
 
-
-        :param include_indices:
+        :type include_indices: bool
+        :param include_indices: add index creation statements to ddl_statements?
 
         :rtype: list
         """
         parent_table_sql = ''
-        fields = ['`%s`' % f for f in cls().get_field_names()]
 
-        fields_pk = cls.table_pk
-        if cls.table_parent:  # add parent primary keys
-            fields_pk = cls.table_parent.table_pk + fields_pk
+        fields = cls.get_fields()
+        if cls.table_parent:
+            fields = OrderedDict(cls.table_parent.get_fields_pk().items() + fields.items())
+            parent_table_sql = ' INTERLEAVE IN `%(parent_table)s `' % {'parent_table': cls.table_parent.table_name}
+            if cls.table_parent_on_delete == 'CASCADE':
+                parent_table_sql += ' ON DELETE CASCADE'
+            else:
+                parent_table_sql += ' ON DELETE NO ACTION'
 
-            parent_table_sql = 'INTERLEAVE IN `%(parent_table)s`' % {'parent_table': cls.table_parent}
-
-        fields_pk = ['`%s`' % f for f in fields_pk]
+        fields_pk = ['`%s`' % f for f in cls.get_field_names_pk()]
 
         ddl_statements = [
-            """CREATE TABLE `%(table)s` (%(fields)s) PRIMARY KEY (%(fields_pk)s), (%(parent_table_sql)s)""" % {
+            """CREATE TABLE `%(table)s` (\n%(field_definitions)s\n) PRIMARY KEY (\n%(primary_keys)s) %(parent_table_sql)s;""" % {
                 'table': cls.table_name,
-                'fields': fields,
-                'fields_pk': fields_pk,
+                'field_definitions': ',\n'.join([field.stmt_create(field_name)
+                                                for field_name, field in fields.items()]),
+                'primary_keys': ', '.join(['`%s`' % f for f in fields_pk]),
                 'parent_table_sql': parent_table_sql
             }]
 
@@ -190,40 +193,71 @@ class SpannerModel(object):
     def stmt_drop_indices(cls):
         return [index.stmt_drop(cls) for index in cls.table_indices]
 
-    #
-    # misc helper methods
-    #
-
     @property
     def objects(self):
         return SpannerQueryset(self)
 
-    def get_pk_fields(self):
-        """ Create primary key field list, resolve parent-child relationships. """
-        pk_fields = self.table_pk
-        if self.table_parent:
-            pk_fields = self.table_parent.get_pk_fields() + pk_fields
+    #
+    # misc helper methods
+    #
 
-        return pk_fields
+    @classmethod
+    def get_fields(cls):
+        """
 
-    def get_indices(self):
+        :rtype: OrderedDict[str, SpannerField]
+        """
         return OrderedDict([
-            (attr_key, getattr(self, attr_key)) for attr_key in dir(self)
-            if isinstance(getattr(self, attr_key), Index)
+            (attr_key, getattr(cls, attr_key)) for attr_key in dir(cls)
+            if isinstance(getattr(cls, attr_key), SpannerField)
         ])
 
-    def get_fields(self):
+    @classmethod
+    def get_fields_pk(cls):
+        """
+        Get primary key fields (includes parent table's primary key fields).
+
+        :rtype: OrderedDict[str, SpannerField]
+        """
+        fields = cls.get_fields()
+
+        pk_fields = [(pk, fields[pk]) for pk in cls.table_pk]
+        if cls.table_parent:
+            pk_fields = cls.table_parent.get_fields_pk().items() + pk_fields
+
+        return OrderedDict(pk_fields)
+
+    @classmethod
+    def get_field_names_pk(cls):
+        """
+        Create primary key field list, resolve parent-child relationships.
+
+        :rtype: list[str]
+        """
+        return cls.get_fields_pk().keys()
+
+    @classmethod
+    def get_fields_with_parent_pks(cls):
+        """
+        Get fields plus the primary key fields from all parent models.
+
+        :rtype: OrderedDict[str, SpannerField]
+        """
+        pass
+
+    @classmethod
+    def get_indices(cls):
+        """
+
+        :rtype: OrderedDict[str, SpannerIndex]
+        """
         return OrderedDict([
-            (attr_key, getattr(self, attr_key)) for attr_key in dir(self)
-            if isinstance(getattr(self, attr_key), SpannerField)
+            (attr_key, getattr(cls, attr_key)) for attr_key in dir(cls)
+            if isinstance(getattr(cls, attr_key), SpannerIndex)
         ])
 
-    def get_field_names(self):
-        return [attr_key for attr_key in dir(self)
-                if isinstance(getattr(self, attr_key), SpannerField)]
 
-
-class Index(object):
+class SpannerIndex(object):
 
     def __init__(self, name, fields, **kwargs):
         """

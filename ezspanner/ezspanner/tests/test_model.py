@@ -10,7 +10,7 @@ from ezspanner.tests.helper import TestModelA, TestModelB, TestModelC
 
 class SpannerModelTests(TestCase):
 
-    def test_stmt_create_order(self):
+    def test_get_registered_models_in_correct_order(self):
         sorted_models = list(SpannerModelRegistry.get_registered_models_in_correct_order())
         self.assertEqual(len(sorted_models), 3)
         self.assertIsInstance(sorted_models[0], TestModelA)
@@ -18,6 +18,7 @@ class SpannerModelTests(TestCase):
         self.assertIsInstance(sorted_models[2], TestModelC)
 
     def test_stmt_create(self):
+        create_statements = SpannerModelRegistry.create_table_statements()
         pass
 
     def test_stmt_drop(self):

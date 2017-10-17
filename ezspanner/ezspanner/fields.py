@@ -24,12 +24,24 @@ class SpannerField(object):
     def to_db(self, value):
         return value
 
-    def get_type(self):
+    def get_spanner_type(self):
         """ get spanner param type based on field type for proper data sanitation. """
         spanner_type = getattr(types, self.type+'_PARAM_TYPE')
         if not spanner_type:
             raise ValueError("invalid spanner type specified: %s" % self.type)
         return spanner_type
+
+    def get_type(self):
+        if self.type in {'STRING', 'BYTES'}:
+            return self.type + '(%s)' % self.length
+        return self.type
+
+    def stmt_create(self, field_model_name):
+        return """`%(field_model_name)s` %(type)s %(null)s""" % {
+            'type': self.get_type(),
+            'null': 'NULL' if self.null else 'NOT NULL',
+            'field_model_name': field_model_name
+        }
 
 
 class IntField(SpannerField):
