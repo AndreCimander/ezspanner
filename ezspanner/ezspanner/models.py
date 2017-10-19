@@ -107,6 +107,18 @@ def register():
 DEFAULT_NAMES = ('table', 'pk', 'parent', 'parent_on_delete', 'indices', 'abstract')
 
 
+class ModelState(object):
+    """
+    A class for storing instance state
+    """
+    def __init__(self, db=None):
+        self.db = db
+        # If true, uniqueness validation checks will consider this a new, as-yet-unsaved object.
+        # Necessary for correct validation of new instances of objects with explicit (non-auto) PKs.
+        # This impacts validation only; it has no effect on the actual save.
+        self.adding = True
+
+
 class SpannerModelMeta(object):
 
     def __init__(self, meta):
@@ -119,6 +131,7 @@ class SpannerModelMeta(object):
         self.parent = None
         self.abstract = False
         self.pk = []
+
 
     def contribute_to_class(self, cls, name):
 
@@ -322,6 +335,73 @@ class SpannerModel(six.with_metaclass(SpannerModelBase)):
 
         parent = None
         parent_on_delete = 'CASCADE'
+
+    def __init__(self, *args, **kwargs):
+        # Set up the storage for instance state
+        self._state = ModelState()
+
+        # There is a rather weird disparity here; if kwargs, it's set, then args
+        # overrides it. It should be one or the other; don't duplicate the work
+        # The reason for the kwargs check is that standard iterator passes in by
+        # args, and instantiation for iteration is 33% faster.
+        args_len = len(args)
+        if args_len > len(self._meta.local_fields):
+            # Daft, but matches old exception sans the err msg.
+            raise IndexError("Number of args exceeds number of fields")
+
+        if not kwargs:
+            fields_iter = iter(self._meta.local_fields)
+            # The ordering of the zip calls matter - zip throws StopIteration
+            # when an iter throws it. So if the first iter throws it, the second
+            # is *not* consumed. We rely on this, so don't change the order
+            # without changing the logic.
+            for val, field in zip(args, fields_iter):
+                setattr(self, field.attname, val)
+        else:
+            # Slower, kwargs-ready version.
+            fields_iter = iter(self._meta.local_fields)
+            for val, field in zip(args, fields_iter):
+                setattr(self, field.attname, val)
+                kwargs.pop(field.name, None)
+
+        # Now we're left with the unprocessed fields that *must* come from
+        # keywords, or default.
+
+        for field in fields_iter:
+            if kwargs:
+                try:
+                    val = kwargs.pop(field.name)
+                except KeyError:
+                    # This is done with an exception rather than the
+                    # default argument on pop because we don't want
+                    # get_default() to be evaluated, and then not used.
+                    # Refs #12057.
+                    val = field.get_default()
+            else:
+                val = field.get_default()
+
+            setattr(self, field.name, val)
+
+        if kwargs:
+            for prop in list(kwargs):
+                try:
+                    if isinstance(getattr(self.__class__, prop), property):
+                        setattr(self, prop, kwargs.pop(prop))
+                except AttributeError:
+                    pass
+            if kwargs:
+                raise TypeError("'%s' is an invalid keyword argument for this function" % list(kwargs)[0])
+        super(SpannerModel, self).__init__()
+
+    @classmethod
+    def from_db(cls, db, field_names, values):
+        if cls._deferred:
+            new = cls(**dict(zip(field_names, values)))
+        else:
+            new = cls(*values)
+        new._state.adding = False
+        new._state.db = db
+        return new
 
     @classmethod
     def verify_table(cls):
