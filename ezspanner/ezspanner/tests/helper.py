@@ -6,7 +6,6 @@ from future.builtins import *
 import ezspanner
 
 
-@ezspanner.register()
 class TestModelA(ezspanner.SpannerModel):
     class Meta:
         table = 'model_a'
@@ -20,7 +19,6 @@ class TestModelA(ezspanner.SpannerModel):
     field_string_null = ezspanner.StringField(length=200, null=True)
 
 
-@ezspanner.register()
 class TestModelB(ezspanner.SpannerModel):
     class Meta:
         table = 'model_b'
@@ -28,9 +26,11 @@ class TestModelB(ezspanner.SpannerModel):
         parent = TestModelA
 
     id_b = ezspanner.IntField()
+    value_field_x = ezspanner.IntField()
+    value_field_y = ezspanner.IntField()
+    value_field_z = ezspanner.IntField()
 
 
-@ezspanner.register()
 class TestModelC(ezspanner.SpannerModel):
     class Meta:
         table = 'model_c'
@@ -40,5 +40,14 @@ class TestModelC(ezspanner.SpannerModel):
     id_c = ezspanner.IntField()
 
 
+class TestModelD(TestModelB):
+    class Meta:
+        table = 'model_d'
+        pk = ['id_d']
+
+    id_d = ezspanner.IntField()
+
+
 class TestModelNotRegistered(TestModelC):
-    pass
+    class Meta:
+        abstract = True
