@@ -3,6 +3,14 @@ from __future__ import absolute_import, division, print_function, unicode_litera
 import inspect
 
 
+class Empty(object):
+    pass
+
+
+class NOT_PROVIDED(object):
+    pass
+
+
 def get_valid_instance_from_class(obj_or_class, valid_class_types=None, *instance_args, **instance_kwargs):
     """
     2-Step function to instantiate/validate a given parameter.

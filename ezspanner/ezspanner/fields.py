@@ -4,13 +4,7 @@ import logging
 
 from google.cloud.spanner import types
 
-
-class Empty(object):
-    pass
-
-
-class NOT_PROVIDED:
-    pass
+from ezspanner.helper import NOT_PROVIDED, Empty
 
 
 class SpannerField(object):
@@ -19,8 +13,8 @@ class SpannerField(object):
     length_required = False
     
     # These track each time a Field instance is created. Used to retain order.
-    # The auto_creation_counter is used for fields that Django implicitly
-    # creates, creation_counter is used for all user-specified fields.
+    # The auto_creation_counter is used for index_fields that Django implicitly
+    # creates, creation_counter is used for all user-specified index_fields.
     creation_counter = 0
     auto_creation_counter = -1
 
@@ -104,7 +98,7 @@ class SpannerField(object):
         """
         Returns the value of this field in the given model instance.
         """
-        return getattr(obj, self.attname)
+        return getattr(obj, self.name)
 
     def from_db(self, value):
         return value

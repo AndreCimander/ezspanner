@@ -129,8 +129,8 @@ class SpannerModelMeta(object):
         self.field_lookup = {}
 
         self.pk = []
-        self.pk_fields = []
-        
+        self.primary = None
+
         self.indices = []
         self.index_lookup = {}
         self.inherit_indices = True
@@ -183,24 +183,29 @@ class SpannerModelMeta(object):
         self.local_fields.insert(bisect(self.local_fields, field), field)
 
     def add_index(self, index):
-        from .indices import SpannerIndex
+        from .indices import SpannerIndex, PrimaryKey
         assert isinstance(index, SpannerIndex)
         if self.index_lookup.get(index.name):
             return
 
-        # todo: decide if we add the primary index as well?
-
-        # todo: check that index fields exist
-        index.validate()
-
         self.index_lookup[index.name] = index
-        self.indices.append(index)
+
+        # don't assign the primary key to the indices list
+        if isinstance(index, PrimaryKey):
+            self.primary = index
+        else:
+            self.indices.append(index)
 
     def interleave_with_parent(self, parent):
+        # add primary key field names from all parents
         self.add_parent_pk_definition(parent._meta.get_parent_pk_definition())
-        for field in parent._meta.get_fields_pk():
-            new_field = copy.deepcopy(field)
-            new_field.contribute_to_class(self.model, field.name,check_if_already_added=True)
+
+        # copy all primary key field names that needs to be copied to this model
+        for field in parent._meta.primary.get_field_names():
+            new_field = copy.deepcopy(parent._meta.field_lookup[field])
+            # fixme: check_if_already_added still required?
+            # (IIRC there was a list -> set conversion in django's code, so yes, still required)
+            new_field.contribute_to_class(self.model, new_field.name, check_if_already_added=True)
 
     def get_parent_pk_definition(self):
         return self.pk
@@ -216,20 +221,6 @@ class SpannerModelMeta(object):
         return self.pk_fields
 
     def _prepare(cls, model):
-        """
-        Do some more magic once self._meta has been populated.
-        """
-
-        # convert field names to fields
-        # todo: create primary key index
-        for field_id in cls.pk:
-            if field_id[0] == '-':
-                order = 'DESC'
-                field_id = field_id[1:]
-            else:
-                order = 'ASC'
-
-            cls.pk_fields.append(cls.field_lookup[field_id])
         pass
 
 
@@ -280,7 +271,8 @@ class SpannerModelBase(type):
         all_fields = chain(
             new_class._meta.local_fields
         )
-        # All the fields of any type declared on this model
+
+        # All the index_fields of any type declared on this model
         field_names = {f.name for f in all_fields}
 
         # interleave parent
@@ -302,11 +294,11 @@ class SpannerModelBase(type):
                 interleave_with = base._meta.parent
 
             # todo: decide: do we inherit ._meta.indices
-            # add parent's fields to model
+            # add parent's index_fields to model
             parent_fields = base._meta.local_fields
             for field in parent_fields:
-                # Check for clashes between locally declared fields and those
-                # on the base classes (we cannot handle shadowed fields at the
+                # Check for clashes between locally declared index_fields and those
+                # on the base classes (we cannot handle shadowed index_fields at the
                 # moment).
                 if field.name in field_names:
                     raise FieldError(
@@ -332,9 +324,15 @@ class SpannerModelBase(type):
                     new_index = copy.deepcopy(index)
                     new_class.add_to_class(new_index.name, new_index)
 
-        # interleave table with parent table
+        # interleave table with parent table (also copies&prepends _meta.pk index_fields from parent)
         if interleave_with:
             new_class._meta.interleave_with_parent(interleave_with)
+
+        # convert primary key field list/tuple to PrimaryKey index
+        if isinstance(new_class._meta.pk, (list, tuple)):
+            from ezspanner import PrimaryKey
+            new_index = PrimaryKey(fields=new_class._meta.pk)
+            new_class.add_to_class(new_index.name, new_index)
 
         # register class in registry (if not abstract)
         if not new_class._meta.abstract:
@@ -380,7 +378,7 @@ class SpannerModel(six.with_metaclass(SpannerModelBase)):
         args_len = len(args)
         if args_len > len(self._meta.local_fields):
             # Daft, but matches old exception sans the err msg.
-            raise IndexError("Number of args exceeds number of fields")
+            raise IndexError("Number of args exceeds number of index_fields")
 
         if not kwargs:
             fields_iter = iter(self._meta.local_fields)
@@ -397,7 +395,7 @@ class SpannerModel(six.with_metaclass(SpannerModelBase)):
                 setattr(self, field.attname, val)
                 kwargs.pop(field.name, None)
 
-        # Now we're left with the unprocessed fields that *must* come from
+        # Now we're left with the unprocessed index_fields that *must* come from
         # keywords, or default.
 
         for field in fields_iter:
@@ -564,13 +562,11 @@ class SpannerModel(six.with_metaclass(SpannerModelBase)):
     @classmethod
     def get_fields_pk(cls):
         """
-        Get primary key fields (includes parent table's primary key fields).
+        Get primary key index_fields (includes parent table's primary key index_fields).
 
         :rtype: OrderedDict[str, SpannerField]
         """
-        fields = cls.get_fields()
-
-        pk_fields = [(pk, fields[pk]) for pk in cls.Meta.pk]
+        pk_fields = [(f, cls._meta.field_lookup[f]) for f in cls._meta.primary.get_field_names()]
         if cls.has_parent():
             pk_fields = cls.Meta.parent.get_fields_pk().items() + pk_fields
 
@@ -588,7 +584,7 @@ class SpannerModel(six.with_metaclass(SpannerModelBase)):
     @classmethod
     def get_fields_with_parent_pks(cls):
         """
-        Get fields plus the primary key fields from all parent models.
+        Get index_fields plus the primary key index_fields from all parent models.
 
         :rtype: OrderedDict[str, SpannerField]
         """

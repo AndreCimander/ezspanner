@@ -5,6 +5,8 @@ from collections import OrderedDict
 
 from future.builtins import *
 
+from ezspanner.helper import Empty
+
 
 class SpannerIndex(object):
     """
@@ -18,7 +20,7 @@ class SpannerIndex(object):
             pk = ['example_field']
 
             indices = [
-                # create descending sorted index over id_a that stores additional fields
+                # create descending sorted index over id_a that stores additional index_fields
                 SpannerIndex('index_name', '-id_a', storing=['field_x', 'field_y'])
             ]
 
@@ -41,17 +43,17 @@ class SpannerIndex(object):
         self.model = None
         self.unique = kwargs.get('unique', False)
         self.storing = kwargs.get('storing', [])
-        self.fields = OrderedDict()
+        self.fields = fields
+        self.index_fields = OrderedDict()
         for field in fields:
             if field[0] == '-':
-                self.fields[field[1:]] = ' DESC'
+                self.index_fields[field[1:]] = ' DESC'
             else:
-                self.fields[field] = ''
+                self.index_fields[field] = ''
 
     def __str__(self):
         """ Return index name with model information. """
-        model = self.model
-        return '%s.%s' % (model._meta.object_name, self.name)
+        return '%s.%s' % (self.model._meta.object_name, self.name)
 
     def __repr__(self):
         """
@@ -63,12 +65,23 @@ class SpannerIndex(object):
             return '%s <%s: %s>' % (self, path, self.fields)
         return '<%s>' % path
 
+    def __copy__(self):
+        # We need to avoid hitting __reduce__, so define this
+        # slightly weird copy construct.
+        obj = Empty()
+        obj.__class__ = self.__class__
+        obj.__dict__ = self.__dict__.copy()
+        return obj
+
     def contribute_to_class(self, cls, name):
         self.model = cls
         cls._meta.add_index(self)
 
     def validate(self):
         pass
+
+    def get_field_names(self):
+        return self.index_fields.keys()
 
     def stmt_drop(self):
         """
@@ -93,11 +106,11 @@ class SpannerIndex(object):
         :rtype: unicode
         :returns: create index string
         """
-        fields = ['`%s` %s' % (field_name, field_sort) for field_name, field_sort in self.fields.items()]
+        fields = ['`%s` %s' % (field_name, field_sort) for field_name, field_sort in self.index_fields.items()]
         return 'CREATE%(unique)s INDEX `%(name)s` ON %(table)s (%(fields)s)%(storing)s;' % {
             'name': self.name,
             'table': self.model.Meta.table,
-            'fields': ', '.join(fields),
+            'index_fields': ', '.join(fields),
             'unique': ' UNIQUE' if self.unique else '',
             'storing': '' if not self.storing else ' STORING(%s)' % ', '.join(['`%s`' % f for f in self.storing]),
         }
@@ -109,10 +122,10 @@ class PrimaryKey(SpannerIndex):
         name = 'primary'
         super(PrimaryKey, self).__init__(name, fields, **kwargs)
 
-    def stmt_drop(self, model):
+    def stmt_drop(self):
         # we can't drop primary indices
         return ''
 
-    def stmt_create(self, model):
-        # we only need a comma separated list of fields
-        return ', '.join(['`%s` %s' % (field_name, field_sort) for field_name, field_sort in self.fields.items()])
+    def stmt_create(self):
+        # we only need a comma separated list of index_fields
+        return ', '.join(['`%s` %s' % (field_name, field_sort) for field_name, field_sort in self.index_fields.items()])
