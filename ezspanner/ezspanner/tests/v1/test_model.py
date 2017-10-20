@@ -19,7 +19,22 @@ class SpannerModelTests(TestCase):
 
     def test_stmt_create(self):
         ddl_statements = SpannerModelRegistry.create_table_statements()
-        self.assertEqual(len(ddl_statements), 6)
+        self.assertEqual(len(ddl_statements), 7)
+        self.assertEqual(ddl_statements[0], """CREATE TABLE `model_a` (
+`id_a` INT64 NOT NULL,
+`field_int_not_null` INT64 NOT NULL,
+`field_int_null` INT64 NULL,
+`field_string_not_null` INT64 NOT NULL,
+`field_string_null` STRING(200) NULL
+) PRIMARY KEY (`id_a` );""")
+        self.assertEqual(ddl_statements[4], """CREATE TABLE `model_d` (
+`id_a` INT64 NOT NULL,
+`id_b` INT64 NOT NULL,
+`value_field_x` INT64 NULL,
+`value_field_y` INT64 NULL,
+`value_field_z` INT64 NULL,
+`id_d` INT64 NOT NULL
+) PRIMARY KEY (`id_a` , `id_b` ) INTERLEAVE IN `model_a ` ON DELETE CASCADE;""")
 
     def test_prio_dict(self):
         prio_dict = SpannerModelRegistry.get_registered_models_prio_dict()

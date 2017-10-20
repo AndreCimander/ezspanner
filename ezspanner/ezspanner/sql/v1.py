@@ -35,7 +35,7 @@ class SQLTable(object):
         primary_key_fields = model_meta.primary.get_fields_with_sort()
 
         ddl_statements = [
-            """CREATE TABLE `%(table)s` (\n%(field_definitions)s\n) PRIMARY KEY (\n%(primary_key_fields)s) %(parent_table_sql)s;""" % {
+            """CREATE TABLE `%(table)s` (\n%(field_definitions)s\n) PRIMARY KEY (%(primary_key_fields)s)%(parent_table_sql)s;""" % {
                 'table': model_meta.table,
                 'field_definitions': ',\n'.join([SQLField(field).stmt_create()[0]
                                                 for field in fields]),
