@@ -51,7 +51,7 @@ class SQLTable(object):
         return ddl_statements
 
     def stmt_delete(self):
-        return ["""DROP TABLE `%(table)s` """ % {
+        return ["""DROP TABLE `%(table)s`""" % {
             'table': self.model._meta.table,
         }]
 

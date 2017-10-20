@@ -24,7 +24,7 @@ class SpannerModelRegistry(object):
     (e.g. create/drop tables).
 
     """
-    registered_models = {}
+    registered_models = OrderedDict()
 
     @classmethod
     def register(cls, spanner_class):
@@ -39,7 +39,7 @@ class SpannerModelRegistry(object):
         # test for table name collisions
         registered_class = cls.registered_models.get(spanner_class._meta.table)
         if registered_class and registered_class != spanner_class:
-            raise ValueError("SpannerModel.meta.table collision: %s %s" % (registered_class, spanner_class))
+            raise ModelError("SpannerModel.meta.table collision: %s %s" % (registered_class, spanner_class))
 
         cls.registered_models[spanner_class._meta.table] = spanner_class
 
@@ -56,10 +56,10 @@ class SpannerModelRegistry(object):
 
     @staticmethod
     def _get_prio(model_class, i=0):
-        while getattr(model_class._meta, 'parent', False):
+        while model_class._meta.parent:
             i += 1
             model_class = model_class._meta.parent
-            if not model_class._meta.parent or i >= 9:
+            if i >= 9:
                 break
         return i
 
@@ -78,12 +78,16 @@ class SpannerModelRegistry(object):
         database.update_ddl(ddl_statements=ddl_statements).result()
 
     @classmethod
-    def drop_tables(cls, connection_id=None):
+    def delete_table_statements(cls):
         ddl_statements = []
-        for spanner_class in cls.registered_models.values():
-            assert isinstance(spanner_class, SpannerModel)
-            ddl_statements.extend(spanner_class.stmt_drop_table())
+        for spanner_class in cls.get_registered_models_in_correct_order():
+            builder = sql_v1.SQLTable(spanner_class)
+            ddl_statements.extend(builder.stmt_delete())
+        return ddl_statements
 
+    @classmethod
+    def drop_tables(cls, connection_id=None):
+        ddl_statements = cls.drop_table_statements()
         database = Connection.get(connection_id=connection_id)
         database.update_ddl(ddl_statements=ddl_statements).result()
 

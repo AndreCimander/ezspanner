@@ -18,8 +18,13 @@ class SpannerModelTests(TestCase):
         self.assertIsInstance(sorted_models[2], TestModelC)
 
     def test_stmt_create(self):
-        create_statements = SpannerModelRegistry.create_table_statements()
-        pass
+        ddl_statements = SpannerModelRegistry.create_table_statements()
+        self.assertEqual(len(ddl_statements), 6)
 
-    def test_stmt_drop(self):
-        pass
+    def test_stmt_delete(self):
+        ddl_statements = SpannerModelRegistry.delete_table_statements()
+        self.assertEqual(len(ddl_statements), 4)
+        self.assertEqual(ddl_statements[0], 'DROP TABLE `model_a`')
+        self.assertEqual(ddl_statements[1], 'DROP TABLE `model_b`')
+        self.assertEqual(ddl_statements[2], 'DROP TABLE `model_d`')
+        self.assertEqual(ddl_statements[3], 'DROP TABLE `model_c`')
