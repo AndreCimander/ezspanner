@@ -5,7 +5,7 @@ from future.builtins import *
 from unittest import TestCase
 
 from ezspanner import SpannerModelRegistry
-from ezspanner.tests.helper import TestModelA, TestModelB, TestModelC
+from ezspanner.tests.v1.helper import TestModelA, TestModelB, TestModelC
 
 
 class SpannerModelTests(TestCase):

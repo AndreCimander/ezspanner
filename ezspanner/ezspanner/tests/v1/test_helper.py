@@ -6,7 +6,7 @@ from unittest import TestCase
 from future.builtins import *
 
 from ezspanner.helper import get_valid_instance_from_class
-from ezspanner.tests.helper import TestModelA, TestModelB
+from ezspanner.tests.v1.helper import TestModelA, TestModelB
 
 
 class HelperGetValidInstanceTests(TestCase):
