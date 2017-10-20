@@ -43,13 +43,12 @@ class SpannerIndex(object):
         self.model = None
         self.unique = kwargs.get('unique', False)
         self.storing = kwargs.get('storing', [])
+        # raw field strings containing -'s to indicate descending sort
         self.fields = fields
-        self.index_fields = OrderedDict()
-        for field in fields:
-            if field[0] == '-':
-                self.index_fields[field[1:]] = ' DESC'
-            else:
-                self.index_fields[field] = ''
+
+        # build field list with sort based on fields
+        self.fields_with_sort = None
+        self.build_fields_with_sort()
 
     def __str__(self):
         """ Return index name with model information. """
@@ -80,8 +79,19 @@ class SpannerIndex(object):
     def validate(self):
         pass
 
+    def build_fields_with_sort(self):
+        self.index_fields = OrderedDict()
+        for field in self.fields:
+            if field[0] == '-':
+                self.index_fields[field[1:]] = ' DESC'
+            else:
+                self.index_fields[field] = ''
+
     def get_field_names(self):
         return self.index_fields.keys()
+
+    def get_fields_with_sort(self):
+        return ['`%s` %s' % (field_name, field_sort) for field_name, field_sort in self.index_fields.items()]
 
     def stmt_drop(self):
         """
@@ -120,14 +130,12 @@ class PrimaryKey(SpannerIndex):
         super(PrimaryKey, self).__init__(name, fields, **kwargs)
 
     def set_parent(self, parent):
+        # if we inherited a pk from another model and the parent is already set: don't re-add the parent's pk fields
+        if self.parent == parent:
+            return
         self.parent = parent
         self.fields = parent.fields + self.fields
-
-    def get_field_names(self):
-        if self.parent:
-            return self.parent.get_field_names() + self.index_fields.keys()
-        else:
-            return self.index_fields.keys()
+        self.build_fields_with_sort()
 
     def stmt_drop(self):
         # we can't drop primary indices

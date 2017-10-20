@@ -129,7 +129,6 @@ class SpannerModelMeta(object):
         self.field_lookup = {}
 
         self.pk = []
-        self.pk_parent = []
         self.primary = None
 
         self.indices = []
@@ -198,33 +197,19 @@ class SpannerModelMeta(object):
             self.indices.append(index)
 
     def interleave_with_parent(self, parent):
-        # add primary key field names from all parents
-        # fixme: if we inherit a pk from another class that is a interleaved table we already have the parent's pk...
-        self.add_parent_pk_definition(parent._meta.get_parent_pk_definition())
-
         # copy all primary key field names that needs to be copied to this model
         for field in parent._meta.primary.get_field_names():
             new_field = copy.deepcopy(parent._meta.field_lookup[field])
-            # fixme: check_if_already_added still required?
-            # (IIRC there was a list -> set conversion in django's code, so yes, still required)
             new_field.contribute_to_class(self.model, new_field.name, check_if_already_added=True)
 
         # add parent primary
         self.primary.set_parent(parent._meta.primary)
 
-
     def get_parent_pk_definition(self):
         return self.pk
 
-    def add_parent_pk_definition(self, pk_field_list):
-        # prepend parent pk to own pk definition
-        self.pk_parent = pk_field_list
-
     def get_fields(self):
         return self.local_fields
-
-    def get_fields_pk(self):
-        return self.pk_fields
 
     def _prepare(cls, model):
         pass
@@ -255,7 +240,6 @@ class SpannerModelBase(type):
             meta = getattr(new_class, 'Meta', None)
         else:
             meta = attr_meta
-        base_meta = getattr(new_class, '_meta', None)
 
         new_class.add_to_class('_meta', SpannerModelMeta(meta))
 
@@ -511,7 +495,7 @@ class SpannerModel(six.with_metaclass(SpannerModelBase)):
             else:
                 parent_table_sql += ' ON DELETE NO ACTION'
 
-        primary_key_fields = cls.get_field_names_pk()
+        primary_key_fields = cls._meta.primary.get_fields_with_sort()
 
         ddl_statements = [
             """CREATE TABLE `%(table)s` (\n%(field_definitions)s\n) PRIMARY KEY (\n%(primary_key_fields)s) %(parent_table_sql)s;""" % {
@@ -585,15 +569,6 @@ class SpannerModel(six.with_metaclass(SpannerModelBase)):
         :rtype: list[str]
         """
         return cls.get_fields_pk().keys()
-
-    @classmethod
-    def get_fields_with_parent_pks(cls):
-        """
-        Get index_fields plus the primary key index_fields from all parent models.
-
-        :rtype: OrderedDict[str, SpannerField]
-        """
-        pass
 
     @classmethod
     def get_indices(cls):
