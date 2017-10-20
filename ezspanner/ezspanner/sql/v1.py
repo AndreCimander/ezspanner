@@ -68,11 +68,11 @@ class SQLField(object):
         """
         :rtype: list
         """
-        return """`%(field_model_name)s` %(type)s %(null)s""" % {
+        return ["""`%(field_model_name)s` %(type)s %(null)s""" % {
             'type': self.field.get_type(),
             'null': 'NULL' if self.field.null else 'NOT NULL',
             'field_model_name': self.field.name
-        }
+        }]
 
 
 class SQLIndex(object):
