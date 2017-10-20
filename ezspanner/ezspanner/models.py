@@ -44,12 +44,16 @@ class SpannerModelRegistry(object):
         cls.registered_models[spanner_class._meta.table] = spanner_class
 
     @classmethod
-    def get_registered_models_in_correct_order(cls):
+    def get_registered_models_prio_dict(cls):
         prio_dict = defaultdict(list)
         for class_instance in cls.registered_models.values():
             init_prio = cls._get_prio(class_instance)
             prio_dict[init_prio].append(class_instance)
+        return prio_dict
 
+    @classmethod
+    def get_registered_models_in_correct_order(cls):
+        prio_dict = cls.get_registered_models_prio_dict()
         for i in range(0, 10):
             for o in prio_dict[i]:
                 yield o

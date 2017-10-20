@@ -5,7 +5,7 @@ from future.builtins import *
 from unittest import TestCase
 
 from ezspanner import SpannerModelRegistry
-from ezspanner.tests.v1.helper import TestModelA, TestModelB, TestModelC
+from ezspanner.tests.v1.helper import TestModelA, TestModelB, TestModelC, TestModelD
 
 
 class SpannerModelTests(TestCase):
@@ -20,6 +20,18 @@ class SpannerModelTests(TestCase):
     def test_stmt_create(self):
         ddl_statements = SpannerModelRegistry.create_table_statements()
         self.assertEqual(len(ddl_statements), 6)
+
+    def test_prio_dict(self):
+        prio_dict = SpannerModelRegistry.get_registered_models_prio_dict()
+        prio_dict_lookup = {}
+        for i in range(0, 10):
+            for cls in prio_dict[i]:
+                prio_dict_lookup[cls] = i
+
+        self.assertEqual(prio_dict_lookup[TestModelA], 0)
+        self.assertEqual(prio_dict_lookup[TestModelB], 1)
+        self.assertEqual(prio_dict_lookup[TestModelD], 1)
+        self.assertEqual(prio_dict_lookup[TestModelC], 2)
 
     def test_stmt_delete(self):
         ddl_statements = SpannerModelRegistry.delete_table_statements()
