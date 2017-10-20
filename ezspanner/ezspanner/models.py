@@ -16,6 +16,7 @@ from .helper import get_valid_instance_from_class, subclass_exception
 from .connection import Connection
 from .query import SpannerQueryset
 from .fields import SpannerField
+from .sql import v1 as sql_v1
 
 
 class SpannerModelRegistry(object):
@@ -35,10 +36,6 @@ class SpannerModelRegistry(object):
 
         """
         assert isinstance(spanner_class, SpannerModelBase)
-
-        # verify model
-        # todo: refactor and move verification to SpannerModelBase
-        # spanner_class.verify_table()
 
         # test for table name collisions
         registered_class = cls.registered_models.get(spanner_class._meta.table)
@@ -60,10 +57,10 @@ class SpannerModelRegistry(object):
 
     @staticmethod
     def _get_prio(model_class, i=0):
-        while getattr(model_class.Meta, 'parent', False):
+        while getattr(model_class._meta, 'parent', False):
             i += 1
-            model_class = model_class.Meta.parent
-            if not model_class.Meta.parent or i >= 9:
+            model_class = model_class._meta.parent
+            if not model_class._meta.parent or i >= 9:
                 break
         return i
 
@@ -71,8 +68,8 @@ class SpannerModelRegistry(object):
     def create_table_statements(cls):
         ddl_statements = []
         for spanner_class in cls.get_registered_models_in_correct_order():
-            assert isinstance(spanner_class, SpannerModel)
-            ddl_statements.extend(spanner_class.stmt_create_table())
+            builder = sql_v1.SQLTable(spanner_class)
+            ddl_statements.extend(builder.build_stmt_create())
         return ddl_statements
 
     @classmethod
@@ -136,6 +133,7 @@ class SpannerModelMeta(object):
         self.inherit_indices = True
         
         self.parent = None
+        self.parent_on_delete = 'CASCADE'
         self.abstract = False
 
     def contribute_to_class(self, cls, name):
@@ -197,6 +195,9 @@ class SpannerModelMeta(object):
             self.indices.append(index)
 
     def interleave_with_parent(self, parent):
+        # set parent on model meta
+        self.parent = parent
+
         # copy all primary key field names that needs to be copied to this model
         for field in parent._meta.primary.get_field_names():
             new_field = copy.deepcopy(parent._meta.field_lookup[field])
@@ -347,15 +348,6 @@ class SpannerModelBase(type):
 
 class SpannerModel(six.with_metaclass(SpannerModelBase)):
 
-    class Meta:
-        """ default Meta class with all available attributes. """
-        table = ''
-        pk = None
-        indices = []
-
-        parent = None
-        parent_on_delete = 'CASCADE'
-
     def __init__(self, *args, **kwargs):
         # Set up the storage for instance state
         self._state = ModelState()
@@ -424,29 +416,6 @@ class SpannerModel(six.with_metaclass(SpannerModelBase)):
         return new
 
     @classmethod
-    def verify_table(cls):
-        obj = cls()
-        if not hasattr(obj.Meta, 'table') or not obj.Meta.table:
-            raise ValueError("%s: Meta.name not defined!")
-
-        # validate indices
-        # pk
-        if not hasattr(obj.Meta, 'pk') or not isinstance(obj.Meta.pk, (list, tuple)):
-            raise ValueError("%s: Meta.pk must be field-name-string or  a list of field names!" % cls.__name__)
-        # other indices
-        # todo:
-        pass
-
-        # validate parent
-        if obj.has_parent():
-            get_valid_instance_from_class(obj.Meta.parent, valid_class_types=(SpannerModel,))
-
-        from .fields import SpannerField
-        for field in obj.Meta.pk:
-            if not isinstance(getattr(obj, field), SpannerField):
-                raise ValueError("%s: table_pk %s must be valid SpannerFields!" % (cls.__name__, field))
-
-    @classmethod
     def get_table_name(cls):
         if cls.Meta.table:
             return cls.Meta.table
@@ -472,46 +441,6 @@ class SpannerModel(six.with_metaclass(SpannerModelBase)):
         database.update_ddl(ddl_statements=ddl_statements).result()
 
     @classmethod
-    def stmt_create_table(cls, include_indices=True):
-        """
-
-        :type include_indices: bool
-        :param include_indices: add index creation statements to ddl_statements?
-
-        :rtype: list
-        """
-        parent_table_sql = ''
-
-        fields = cls.get_fields()
-        if cls.has_parent():
-            fields = OrderedDict(cls.Meta.parent.get_fields_pk().items() + fields.items())
-
-            # build interleave sql
-            parent_table_sql = ' INTERLEAVE IN `%(parent_table)s `' % {'parent_table': cls.Meta.parent.Meta.table}
-
-            # add on delete, default to CASCADE
-            if not hasattr(cls.Meta, 'parent_on_delete') or cls.Meta.parent_on_delete == 'CASCADE':
-                parent_table_sql += ' ON DELETE CASCADE'
-            else:
-                parent_table_sql += ' ON DELETE NO ACTION'
-
-        primary_key_fields = cls._meta.primary.get_fields_with_sort()
-
-        ddl_statements = [
-            """CREATE TABLE `%(table)s` (\n%(field_definitions)s\n) PRIMARY KEY (\n%(primary_key_fields)s) %(parent_table_sql)s;""" % {
-                'table': cls.Meta.table,
-                'field_definitions': ',\n'.join([field.stmt_create(field_name)
-                                                for field_name, field in fields.items()]),
-                'primary_key_fields': ', '.join(primary_key_fields),
-                'parent_table_sql': parent_table_sql
-            }]
-
-        if include_indices:
-            ddl_statements.extend(cls.stmt_create_indices())
-
-        return ddl_statements
-
-    @classmethod
     def stmt_drop_table(cls):
         return """DROP TABLE `(%table)s` """ % {
             'table': cls.Meta.table,
@@ -532,10 +461,6 @@ class SpannerModel(six.with_metaclass(SpannerModelBase)):
     #
     # misc helper methods
     #
-
-    @classmethod
-    def has_parent(cls):
-        return hasattr(cls.Meta, 'parent') and cls.Meta.parent
 
     @classmethod
     def get_fields(cls):
