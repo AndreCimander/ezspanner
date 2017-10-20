@@ -27,24 +27,35 @@ class SpannerIndex(object):
     ```
 
     """
-    def __init__(self, name, fields, **kwargs):
+    def __init__(self, name, fields, unique=False, storing=None, interleave=None):
         """
 
         :type name: str|unicode
         :param name: name of the index
 
-        :param args: field names for the index.You can use "-" to indicate a descending sort for the field, e.g.
-        "-field_id" -> "`field_id` DESC".
+        :type unique: bool
+        :param unique: should the index be unique?
+
+        :type storing: None|list
+        :param storing: store additional values in the index-table to avoid hitting the full table.
+
+        :type interleave: None|ezspanner.models.SpannerModelBase
+        :param interleave: you can interleave an Index in the parent's table.
 
         :type unique: bool
         :param unique: should this index be a unique index? (default: false)
         """
         self.name = name
         self.model = None
-        self.unique = kwargs.get('unique', False)
-        self.storing = kwargs.get('storing', [])
+        self.unique = unique
+        self.storing = storing or []
         # raw field strings containing -'s to indicate descending sort
         self.fields = fields
+        self.interleave = interleave
+
+        if self.interleave:
+            self.fields = self.interleave._meta.primary.fields + self.fields
+            self.build_fields_with_sort()
 
         # build field list with sort based on fields
         self.fields_with_sort = None
@@ -95,7 +106,7 @@ class SpannerIndex(object):
 
 
 class PrimaryKey(SpannerIndex):
-    """ Special index that acts as primary key, assigned in SpannerModel.Meta.pk. """
+    """ Special index that acts as primary key, assigned to SpannerModel.Meta.primary. """
     def __init__(self, fields, parent=None, **kwargs):
         name = 'primary'
         self.parent = parent
@@ -103,6 +114,7 @@ class PrimaryKey(SpannerIndex):
 
     def set_parent(self, parent):
         # if we inherited a pk from another model and the parent is already set: don't re-add the parent's pk fields
+        # fixme: this could also be handled by SpannerIndex.interleave
         if self.parent == parent:
             return
         self.parent = parent

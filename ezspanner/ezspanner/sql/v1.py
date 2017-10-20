@@ -103,10 +103,11 @@ class SQLIndex(object):
         """
         index = self.index
         fields = ['`%s` %s' % (field_name, field_sort) for field_name, field_sort in index.index_fields.items()]
-        return ['CREATE%(unique)s INDEX `%(name)s` ON `%(table)s` (%(index_fields)s)%(storing)s;' % {
+        return ['CREATE%(unique)s INDEX `%(name)s` ON `%(table)s` (%(index_fields)s)%(storing)s%(interleave)s;' % {
             'name': index.name,
             'table': index.model._meta.table,
             'index_fields': ', '.join(fields),
             'unique': ' UNIQUE' if index.unique else '',
             'storing': '' if not index.storing else ' STORING(%s)' % ', '.join(['`%s`' % f for f in index.storing]),
+            'interleave': '' if not index.interleave else ', INTERLEAVE IN `%s`' % index.interleave._meta.table,
         }]

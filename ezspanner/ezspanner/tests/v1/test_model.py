@@ -19,7 +19,9 @@ class SpannerModelTests(TestCase):
 
     def test_stmt_create(self):
         ddl_statements = SpannerModelRegistry.create_table_statements()
-        self.assertEqual(len(ddl_statements), 7)
+        self.assertEqual(len(ddl_statements), 10)
+
+        # ModelA
         self.assertEqual(ddl_statements[0], """CREATE TABLE `model_a` (
 `id_a` INT64 NOT NULL,
 `field_int_not_null` INT64 NOT NULL,
@@ -27,7 +29,14 @@ class SpannerModelTests(TestCase):
 `field_string_not_null` INT64 NOT NULL,
 `field_string_null` STRING(200) NULL
 ) PRIMARY KEY (`id_a` );""")
-        self.assertEqual(ddl_statements[4], """CREATE TABLE `model_d` (
+
+        # interleave index test
+        # fixme: move to own test
+
+        self.assertEqual(ddl_statements[3], "CREATE INDEX `interleaved` ON `model_b` (`id_a` , `idb_b`  DESC, `value_field_x` , `value_field_y` ), INTERLEAVE IN `model_a`;")
+
+        # ModelD
+        self.assertEqual(ddl_statements[6], """CREATE TABLE `model_d` (
 `id_a` INT64 NOT NULL,
 `id_b` INT64 NOT NULL,
 `value_field_x` INT64 NULL,
