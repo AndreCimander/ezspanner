@@ -129,6 +129,7 @@ class SpannerModelMeta(object):
         self.field_lookup = {}
 
         self.pk = []
+        self.pk_parent = []
         self.primary = None
 
         self.indices = []
@@ -198,6 +199,7 @@ class SpannerModelMeta(object):
 
     def interleave_with_parent(self, parent):
         # add primary key field names from all parents
+        # fixme: if we inherit a pk from another class that is a interleaved table we already have the parent's pk...
         self.add_parent_pk_definition(parent._meta.get_parent_pk_definition())
 
         # copy all primary key field names that needs to be copied to this model
@@ -207,12 +209,16 @@ class SpannerModelMeta(object):
             # (IIRC there was a list -> set conversion in django's code, so yes, still required)
             new_field.contribute_to_class(self.model, new_field.name, check_if_already_added=True)
 
+        # add parent primary
+        self.primary.set_parent(parent._meta.primary)
+
+
     def get_parent_pk_definition(self):
         return self.pk
 
     def add_parent_pk_definition(self, pk_field_list):
         # prepend parent pk to own pk definition
-        self.pk = pk_field_list + self.pk
+        self.pk_parent = pk_field_list
 
     def get_fields(self):
         return self.local_fields
@@ -293,8 +299,7 @@ class SpannerModelBase(type):
             if not interleave_with:
                 interleave_with = base._meta.parent
 
-            # todo: decide: do we inherit ._meta.indices
-            # add parent's index_fields to model
+            # add class parent's fields to model
             parent_fields = base._meta.local_fields
             for field in parent_fields:
                 # Check for clashes between locally declared index_fields and those
@@ -324,15 +329,15 @@ class SpannerModelBase(type):
                     new_index = copy.deepcopy(index)
                     new_class.add_to_class(new_index.name, new_index)
 
-        # interleave table with parent table (also copies&prepends _meta.pk index_fields from parent)
-        if interleave_with:
-            new_class._meta.interleave_with_parent(interleave_with)
-
         # convert primary key field list/tuple to PrimaryKey index
         if isinstance(new_class._meta.pk, (list, tuple)):
             from ezspanner import PrimaryKey
             new_index = PrimaryKey(fields=new_class._meta.pk)
             new_class.add_to_class(new_index.name, new_index)
+
+        # interleave table with parent table (also copies&prepends _meta.pk index_fields from parent)
+        if interleave_with:
+            new_class._meta.interleave_with_parent(interleave_with)
 
         # register class in registry (if not abstract)
         if not new_class._meta.abstract:

@@ -87,8 +87,6 @@ class SpannerIndex(object):
         """
         Create index drop statement.
 
-        :type model: SpannerModel
-
         :rtype: unicode
         :returns: drop index string
         """
@@ -100,8 +98,6 @@ class SpannerIndex(object):
     def stmt_create(self):
         """
         Create index creation statement.
-
-        :type model: SpannerModel
 
         :rtype: unicode
         :returns: create index string
@@ -118,9 +114,20 @@ class SpannerIndex(object):
 
 class PrimaryKey(SpannerIndex):
     """ Special index that acts as primary key, assigned in SpannerModel.Meta.pk. """
-    def __init__(self, fields, **kwargs):
+    def __init__(self, fields, parent=None, **kwargs):
         name = 'primary'
+        self.parent = parent
         super(PrimaryKey, self).__init__(name, fields, **kwargs)
+
+    def set_parent(self, parent):
+        self.parent = parent
+        self.fields = parent.fields + self.fields
+
+    def get_field_names(self):
+        if self.parent:
+            return self.parent.get_field_names() + self.index_fields.keys()
+        else:
+            return self.index_fields.keys()
 
     def stmt_drop(self):
         # we can't drop primary indices

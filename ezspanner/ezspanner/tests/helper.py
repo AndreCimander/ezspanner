@@ -46,7 +46,6 @@ class TestModelC(ezspanner.SpannerModel):
 class TestModelD(TestModelB):
     class Meta:
         table = 'model_d'
-        pk = ['id_d']
 
     id_d = ezspanner.IntField()
 
