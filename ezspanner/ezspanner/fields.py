@@ -131,13 +131,6 @@ class SpannerField(object):
             return self.type + '(%s)' % self.length
         return self.type
 
-    def stmt_create(self, field_model_name):
-        return """`%(field_model_name)s` %(type)s %(null)s""" % {
-            'type': self.get_type(),
-            'null': 'NULL' if self.null else 'NOT NULL',
-            'field_model_name': field_model_name
-        }
-
 
 class IntField(SpannerField):
     type = 'INT64'

@@ -25,13 +25,13 @@ class TestModelB(ezspanner.SpannerModel):
         pk = ['id_b']
         parent = TestModelA
         indices = [
-            ezspanner.SpannerIndex('over9000', fields=['-idb_b', 'value_field_x', '-value_field_y'])
+            ezspanner.SpannerIndex('over9000', fields=['-idb_b', 'value_field_x', 'value_field_y'])
         ]
 
     id_b = ezspanner.IntField()
-    value_field_x = ezspanner.IntField()
-    value_field_y = ezspanner.IntField()
-    value_field_z = ezspanner.IntField()
+    value_field_x = ezspanner.IntField(null=True)
+    value_field_y = ezspanner.IntField(null=True)
+    value_field_z = ezspanner.IntField(null=True)
 
 
 class TestModelC(ezspanner.SpannerModel):

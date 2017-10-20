@@ -93,34 +93,6 @@ class SpannerIndex(object):
     def get_fields_with_sort(self):
         return ['`%s` %s' % (field_name, field_sort) for field_name, field_sort in self.index_fields.items()]
 
-    def stmt_drop(self):
-        """
-        Create index drop statement.
-
-        :rtype: unicode
-        :returns: drop index string
-        """
-        return 'DROP INDEX `%(name)s` ON %(table)s;' % {
-            'name': self.name,
-            'table': self.model.Meta.table
-        }
-
-    def stmt_create(self):
-        """
-        Create index creation statement.
-
-        :rtype: unicode
-        :returns: create index string
-        """
-        fields = ['`%s` %s' % (field_name, field_sort) for field_name, field_sort in self.index_fields.items()]
-        return 'CREATE%(unique)s INDEX `%(name)s` ON %(table)s (%(fields)s)%(storing)s;' % {
-            'name': self.name,
-            'table': self.model.Meta.table,
-            'index_fields': ', '.join(fields),
-            'unique': ' UNIQUE' if self.unique else '',
-            'storing': '' if not self.storing else ' STORING(%s)' % ', '.join(['`%s`' % f for f in self.storing]),
-        }
-
 
 class PrimaryKey(SpannerIndex):
     """ Special index that acts as primary key, assigned in SpannerModel.Meta.pk. """
@@ -136,11 +108,3 @@ class PrimaryKey(SpannerIndex):
         self.parent = parent
         self.fields = parent.fields + self.fields
         self.build_fields_with_sort()
-
-    def stmt_drop(self):
-        # we can't drop primary indices
-        return ''
-
-    def stmt_create(self):
-        # we only need a comma separated list of index_fields
-        return ', '.join(['`%s` %s' % (field_name, field_sort) for field_name, field_sort in self.index_fields.items()])

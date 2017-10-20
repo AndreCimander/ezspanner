@@ -12,10 +12,9 @@ from itertools import chain
 from google.cloud import spanner
 
 from .exceptions import ObjectDoesNotExist, FieldError, ModelError
-from .helper import get_valid_instance_from_class, subclass_exception
+from .helper import subclass_exception
 from .connection import Connection
 from .query import SpannerQueryset
-from .fields import SpannerField
 from .sql import v1 as sql_v1
 
 
@@ -69,7 +68,7 @@ class SpannerModelRegistry(object):
         ddl_statements = []
         for spanner_class in cls.get_registered_models_in_correct_order():
             builder = sql_v1.SQLTable(spanner_class)
-            ddl_statements.extend(builder.build_stmt_create())
+            ddl_statements.extend(builder.stmt_create())
         return ddl_statements
 
     @classmethod
@@ -206,9 +205,6 @@ class SpannerModelMeta(object):
         # add parent primary
         self.primary.set_parent(parent._meta.primary)
 
-    def get_parent_pk_definition(self):
-        return self.pk
-
     def get_fields(self):
         return self.local_fields
 
@@ -268,6 +264,11 @@ class SpannerModelBase(type):
 
         # interleave parent
         interleave_with = new_class._meta.parent
+
+        # add indices to class
+        for index in new_class._meta.indices:
+            new_index = index
+            new_class.add_to_class(new_index.name, new_index)
 
         # Do the appropriate setup for any model parents.
         pk_inherited_from_parent = False
@@ -428,79 +429,6 @@ class SpannerModel(six.with_metaclass(SpannerModelBase)):
     # helper methods for create / drop
     #
 
-    @classmethod
-    def create_table(cls, connection_id=None):
-        ddl_statements = cls.stmt_create_table()
-        database = Connection.get(connection_id=connection_id)
-        database.update_ddl(ddl_statements=ddl_statements).result()
-
-    @classmethod
-    def drop_table(cls, connection_id=None):
-        ddl_statements = cls.stmt_drop_table()
-        database = Connection.get(connection_id=connection_id)
-        database.update_ddl(ddl_statements=ddl_statements).result()
-
-    @classmethod
-    def stmt_drop_table(cls):
-        return """DROP TABLE `(%table)s` """ % {
-            'table': cls.Meta.table,
-        }
-
-    @classmethod
-    def stmt_create_indices(cls):
-        return [index.stmt_create(cls) for index in getattr(cls.Meta, 'indices', [])]
-
-    @classmethod
-    def stmt_drop_indices(cls):
-        return [index.stmt_drop(cls) for index in getattr(cls.Meta, 'indices', [])]
-
     @property
     def objects(self):
         return SpannerQueryset(self)
-
-    #
-    # misc helper methods
-    #
-
-    @classmethod
-    def get_fields(cls):
-        """
-
-        :rtype: OrderedDict[str, SpannerField]
-        """
-        return OrderedDict([
-            (attr_key, getattr(cls, attr_key)) for attr_key in dir(cls)
-            if isinstance(getattr(cls, attr_key), SpannerField)
-        ])
-
-    @classmethod
-    def get_fields_pk(cls):
-        """
-        Get primary key index_fields (includes parent table's primary key index_fields).
-
-        :rtype: OrderedDict[str, SpannerField]
-        """
-        pk_fields = [(f, cls._meta.field_lookup[f]) for f in cls._meta.primary.get_field_names()]
-        if cls.has_parent():
-            pk_fields = cls.Meta.parent.get_fields_pk().items() + pk_fields
-
-        return OrderedDict(pk_fields)
-
-    @classmethod
-    def get_field_names_pk(cls):
-        """
-        Create primary key field list, resolve parent-child relationships and support ASC/DESC
-
-        :rtype: list[str]
-        """
-        return cls.get_fields_pk().keys()
-
-    @classmethod
-    def get_indices(cls):
-        """
-
-        :rtype: OrderedDict[str, SpannerIndex]
-        """
-        return OrderedDict([
-            (i.name, i) for i in getattr(cls.Meta, 'indices', [])
-        ])
