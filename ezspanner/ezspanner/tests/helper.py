@@ -24,6 +24,9 @@ class TestModelB(ezspanner.SpannerModel):
         table = 'model_b'
         pk = ['id_b']
         parent = TestModelA
+        indices = [
+            ezspanner.SpannerIndex('over9000', fields=['-idb_b', 'value_field_x', '-value_field_y'])
+        ]
 
     id_b = ezspanner.IntField()
     value_field_x = ezspanner.IntField()

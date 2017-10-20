@@ -38,6 +38,7 @@ class SpannerIndex(object):
         :param unique: should this index be a unique index? (default: false)
         """
         self.name = name
+        self.model = None
         self.unique = kwargs.get('unique', False)
         self.storing = kwargs.get('storing', [])
         self.fields = OrderedDict()
@@ -47,7 +48,29 @@ class SpannerIndex(object):
             else:
                 self.fields[field] = ''
 
-    def stmt_drop(self, model):
+    def __str__(self):
+        """ Return index name with model information. """
+        model = self.model
+        return '%s.%s' % (model._meta.object_name, self.name)
+
+    def __repr__(self):
+        """
+        Displays the module, class and name of the SpannerField.
+        """
+        path = '%s.%s' % (self.__class__.__module__, self.__class__.__name__)
+        name = getattr(self, 'name', None)
+        if name is not None:
+            return '%s <%s: %s>' % (self, path, self.fields)
+        return '<%s>' % path
+
+    def contribute_to_class(self, cls, name):
+        self.model = cls
+        cls._meta.add_index(self)
+
+    def validate(self):
+        pass
+
+    def stmt_drop(self):
         """
         Create index drop statement.
 
@@ -58,10 +81,10 @@ class SpannerIndex(object):
         """
         return 'DROP INDEX `%(name)s` ON %(table)s;' % {
             'name': self.name,
-            'table': model.Meta.table
+            'table': self.model.Meta.table
         }
 
-    def stmt_create(self, model):
+    def stmt_create(self):
         """
         Create index creation statement.
 
@@ -73,7 +96,7 @@ class SpannerIndex(object):
         fields = ['`%s` %s' % (field_name, field_sort) for field_name, field_sort in self.fields.items()]
         return 'CREATE%(unique)s INDEX `%(name)s` ON %(table)s (%(fields)s)%(storing)s;' % {
             'name': self.name,
-            'table': model.Meta.table,
+            'table': self.model.Meta.table,
             'fields': ', '.join(fields),
             'unique': ' UNIQUE' if self.unique else '',
             'storing': '' if not self.storing else ' STORING(%s)' % ', '.join(['`%s`' % f for f in self.storing]),

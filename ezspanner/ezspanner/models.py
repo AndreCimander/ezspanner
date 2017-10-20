@@ -11,8 +11,8 @@ from itertools import chain
 
 from google.cloud import spanner
 
-from ezspanner.exceptions import ObjectDoesNotExist, FieldError
-from ezspanner.helper import get_valid_instance_from_class, subclass_exception
+from .exceptions import ObjectDoesNotExist, FieldError, ModelError
+from .helper import get_valid_instance_from_class, subclass_exception
 from .connection import Connection
 from .query import SpannerQueryset
 from .fields import SpannerField
@@ -104,7 +104,7 @@ def register():
     return _model_admin_wrapper
 
 
-DEFAULT_NAMES = ('table', 'pk', 'parent', 'parent_on_delete', 'indices', 'abstract')
+DEFAULT_NAMES = ('table', 'pk', 'parent', 'parent_on_delete', 'indices', 'indices_inherit', 'abstract')
 
 
 class ModelState(object):
@@ -126,12 +126,17 @@ class SpannerModelMeta(object):
         self.meta = meta
         self.table = ''
         self.local_fields = []
-        self.lookup_fields = {}
+        self.field_lookup = {}
+
+        self.pk = []
         self.pk_fields = []
+        
+        self.indices = []
+        self.index_lookup = {}
+        self.inherit_indices = True
+        
         self.parent = None
         self.abstract = False
-        self.pk = []
-
 
     def contribute_to_class(self, cls, name):
 
@@ -171,11 +176,25 @@ class SpannerModelMeta(object):
             raise ValueError("%s must define a Meta.table!" % cls)
 
     def add_field(self, field, check_if_already_added=False):
-        if check_if_already_added and self.lookup_fields.get(field.name):
+        if check_if_already_added and self.field_lookup.get(field.name):
             return
 
-        self.lookup_fields[field.name] = field
+        self.field_lookup[field.name] = field
         self.local_fields.insert(bisect(self.local_fields, field), field)
+
+    def add_index(self, index):
+        from .indices import SpannerIndex
+        assert isinstance(index, SpannerIndex)
+        if self.index_lookup.get(index.name):
+            return
+
+        # todo: decide if we add the primary index as well?
+
+        # todo: check that index fields exist
+        index.validate()
+
+        self.index_lookup[index.name] = index
+        self.indices.append(index)
 
     def interleave_with_parent(self, parent):
         self.add_parent_pk_definition(parent._meta.get_parent_pk_definition())
@@ -210,7 +229,7 @@ class SpannerModelMeta(object):
             else:
                 order = 'ASC'
 
-            cls.pk_fields.append(cls.lookup_fields[field_id])
+            cls.pk_fields.append(cls.field_lookup[field_id])
         pass
 
 
@@ -268,6 +287,7 @@ class SpannerModelBase(type):
         interleave_with = new_class._meta.parent
 
         # Do the appropriate setup for any model parents.
+        pk_inherited_from_parent = False
         for base in parents:
             if not hasattr(base, '_meta'):
                 # Things without _meta aren't functional models, so they're
@@ -281,9 +301,8 @@ class SpannerModelBase(type):
             if not interleave_with:
                 interleave_with = base._meta.parent
 
-            # todo: decide: do we inherit ._meta.pk from other bases?
-            # todo: decide: do we inherit ._meta.indices?
-            # add parent's field to model
+            # todo: decide: do we inherit ._meta.indices
+            # add parent's fields to model
             parent_fields = base._meta.local_fields
             for field in parent_fields:
                 # Check for clashes between locally declared fields and those
@@ -298,6 +317,20 @@ class SpannerModelBase(type):
 
                 new_field = copy.deepcopy(field)
                 new_class.add_to_class(field.name, new_field)
+            
+            # assign first parent's pk if this class has no pk defined
+            # make sure that our parent's only have one primary key, otherwise we run into problems.
+            if base._meta.pk and pk_inherited_from_parent:
+                raise ModelError("%s may only inherit one primary key!" % new_class)
+            if base._meta.pk and not new_class._meta.pk:
+                new_class._meta.pk = base._meta.pk
+                pk_inherited_from_parent = True
+
+            # copy parent's indices if this class defines to indices.
+            if new_class._meta.inherit_indices:
+                for index in base._meta.indices:
+                    new_index = copy.deepcopy(index)
+                    new_class.add_to_class(new_index.name, new_index)
 
         # interleave table with parent table
         if interleave_with:
@@ -306,7 +339,7 @@ class SpannerModelBase(type):
         # register class in registry (if not abstract)
         if not new_class._meta.abstract:
             SpannerModelRegistry.register(new_class)
-
+        
         new_class._prepare()
         return new_class
 

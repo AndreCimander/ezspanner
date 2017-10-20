@@ -6,5 +6,14 @@ class ObjectDoesNotExist(Exception):
     pass
 
 
-class FieldError(Exception):
+class ModelError(Exception):
     pass
+
+
+class FieldError(ModelError):
+    pass
+
+
+class IndexError(ModelError):
+    pass
+
