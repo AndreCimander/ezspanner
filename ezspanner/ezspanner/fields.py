@@ -103,8 +103,11 @@ class SpannerField(object):
     def from_db(self, value):
         return value
 
-    def to_db(self, value):
-        return value
+    def to_db(self, model_instance, add):
+        """
+        Returns field's value just before saving.
+        """
+        return getattr(model_instance, self.name)
 
     def contribute_to_class(self, cls, name, check_if_already_added=False):
         self.set_attributes_from_name(name)

@@ -2,11 +2,15 @@
 from __future__ import absolute_import, division, print_function, unicode_literals
 
 
-class ObjectDoesNotExist(Exception):
+class EzSpannerException(Exception):
     pass
 
 
-class ModelError(Exception):
+class ObjectDoesNotExist(EzSpannerException):
+    pass
+
+
+class ModelError(EzSpannerException):
     pass
 
 

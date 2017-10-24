@@ -433,7 +433,162 @@ class SpannerModel(six.with_metaclass(SpannerModelBase)):
             name = c.__module__ + "." + c.__name__
             return name
 
-    #
+    def save(self, force_insert=False, force_update=False, using=None,
+             update_fields=None):
+        """
+        Saves the current instance. Override this in a subclass if you want to
+        control the saving process.
+
+        The 'force_insert' and 'force_update' parameters can be used to insist
+        that the "save" must be an SQL insert or update (or equivalent for
+        non-SQL backends), respectively. Normally, they should not be set.
+        """
+        if force_insert and (force_update or update_fields):
+            raise ValueError("Cannot force both insert and updating in model saving.")
+
+        if update_fields is not None:
+            # If update_fields is empty, skip the save. We do also check for
+            # no-op saves later on for inheritance cases. This bailout is
+            # still needed for skipping signal sending.
+            if len(update_fields) == 0:
+                return
+
+            update_fields = frozenset(update_fields)
+            field_names = set()
+            for field in self._meta.local_fields:
+                field_names.add(field.name)
+
+            non_model_fields = update_fields.difference(field_names)
+
+            if non_model_fields:
+                raise ValueError("The following fields do not exist in this "
+                                 "model or are m2m fields: %s"
+                                 % ', '.join(non_model_fields))
+
+        self.save_base(using=using, force_insert=force_insert,
+                       force_update=force_update, update_fields=update_fields)
+
+    def save_base(self, force_insert=False,
+                  force_update=False, using=None, update_fields=None):
+        """
+        Handles the parts of saving which should be done only once per save,
+        yet need to be done in raw saves, too. This includes some sanity
+        checks and signal sending.
+
+        """
+        assert not (force_insert and (force_update or update_fields))
+        assert update_fields is None or len(update_fields) > 0
+        cls = origin = self.__class__
+        # Skip proxies, but keep the origin as the proxy model.
+        meta = cls._meta
+
+        updated = self._save_table(cls, force_insert, force_update, using, update_fields)
+        # Store the database on which the object was saved
+        self._state.db = using
+        # Once saved, this is no longer a to-be-added instance.
+        self._state.adding = False
+
+    def _save_table(self, cls=None, force_insert=False,
+                    force_update=False, using=None, update_fields=None):
+        """
+        Does the heavy-lifting involved in saving. Updates or inserts the data
+        for a single table.
+        """
+        meta = cls._meta
+        pk_val = self._get_pk_val(meta)
+        non_pks = [f for f in meta.local_fields if f.name not in pk_val['keys']]
+
+        if update_fields:
+            non_pks = [f for f in non_pks if f.name in update_fields]
+
+        pk_set = not bool(pk_val['missing'])
+        if not pk_set and (force_update or update_fields):
+            raise ValueError("Cannot force an update in save() with no primary key.")
+
+        updated = False
+        # If possible, try an UPDATE. If that doesn't update anything, do an INSERT.
+        # UPDATE
+        if pk_set and not force_insert:
+            forced_update = update_fields or force_update
+            updated = self._do_update(using, pk_val, non_pks, forced_update)
+            if force_update and not updated:
+                raise ModelError("Forced update did not affect any rows.")
+
+        # INSERT
+        if not updated:
+            # todo: support auto-generated pk values
+            if not pk_set:
+                raise ValueError("Can't insert value without primary key values! Missing: %s" % pk_val['missing'])
+            self._do_insert(using, pk_val, non_pks)
+        return updated
+
+    def _do_update(self, using, pk_val, update_fields, forced_update):
+        """
+        This method will try to update the model. If the model was updated (in
+        the sense that an update query was done and a matching row was found
+        from the DB) the method will return True.
+        """
+        database = Connection.get(connection_id=using)
+        with database.batch() as batch:
+
+            # add primary keys to the updated columns
+            columns = [pk_val['keys']] + [f.name for f in update_fields]
+
+            result = batch.update(
+                table=self._meta.table,
+                columns=columns,
+                values=pk_val['values'] + [f.to_db(self, False) for f in update_fields]
+            )
+            print (result)
+            return True
+
+    def _do_insert(self, using, pk_val, update_fields):
+        """
+        Do an INSERT. If update_pk is defined then this method should return
+        the new pk for the model.
+        """
+        database = Connection.get(connection_id=using)
+        with database.batch() as batch:
+            # add primary keys to the updated columns
+            columns = [pk_val['keys']] + [f.name for f in self.meta.local_fields]
+
+            result = batch.insert(
+                table=self._meta.table,
+                columns=columns,
+                values=pk_val['values'] + [f.to_db(self, True) for f in update_fields]
+            )
+            pass
+
+    def delete(self, using=None, keep_parents=False):
+        pk_val = self._get_pk_val()
+        assert pk_val['missing'] is False, (
+            "%s object can't be deleted because primary keys are missing: %s." %
+            (self._meta.object_name, pk_val['missing'])
+        )
+
+        database = Connection.get(connection_id=using)
+        with database.batch() as batch:
+            batch.delete(
+                table=self._meta.table,
+                columns=pk_val['keys'],
+                values=pk_val['values']
+            )
+
+        return True
+
+    def _get_pk_val(self, meta=None):
+        if not meta:
+            meta = self._meta
+        keys = meta.primary.fields
+        values = [getattr(self, k) for k in keys]
+        pk_data = {
+            'keys': set(keys),
+            'values': values,
+            'missing': [keys[i] for i, v in enumerate(values) if not v],
+        }
+
+        return pk_data
+
     # helper methods for create / drop
     #
 
