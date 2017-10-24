@@ -18,6 +18,6 @@ class FieldError(ModelError):
     pass
 
 
-class IndexError(ModelError):
+class SpannerIndexError(ModelError):
     pass
 

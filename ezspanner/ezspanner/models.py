@@ -416,10 +416,7 @@ class SpannerModel(six.with_metaclass(SpannerModelBase)):
 
     @classmethod
     def from_db(cls, db, field_names, values):
-        if cls._deferred:
-            new = cls(**dict(zip(field_names, values)))
-        else:
-            new = cls(*values)
+        new = cls(**dict(zip(field_names, values)))
         new._state.adding = False
         new._state.db = db
         return new
