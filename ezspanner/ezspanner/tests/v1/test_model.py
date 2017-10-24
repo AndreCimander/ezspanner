@@ -4,8 +4,8 @@ from future.builtins import *
 
 from unittest import TestCase
 
-from ezspanner import SpannerModelRegistry
-from ezspanner.tests.v1.helper import TestModelA, TestModelB, TestModelC, TestModelD
+from ... import SpannerModelRegistry
+from .helper import TestModelA, TestModelB, TestModelC, TestModelD
 
 
 class SpannerModelTests(TestCase):

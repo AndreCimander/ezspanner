@@ -6,7 +6,7 @@ from future.builtins import *
 class SQLTable(object):
 
     def __init__(self, model):
-        from ezspanner.models import SpannerModelBase
+        from ..models import SpannerModelBase
         assert isinstance(model, SpannerModelBase)
         self.model = model
 
@@ -59,7 +59,7 @@ class SQLTable(object):
 class SQLField(object):
 
     def __init__(self, field):
-        from ezspanner.fields import SpannerField
+        from ..fields import SpannerField
         assert isinstance(field, SpannerField)
         self.field = field
         self.model = field.model
@@ -78,7 +78,7 @@ class SQLField(object):
 class SQLIndex(object):
 
     def __init__(self, index):
-        from ezspanner.indices import SpannerIndex
+        from ..indices import SpannerIndex
         assert isinstance(index, SpannerIndex)
         self.index = index
 

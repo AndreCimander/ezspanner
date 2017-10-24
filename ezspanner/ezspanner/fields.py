@@ -4,7 +4,7 @@ import logging
 
 from google.cloud.spanner import types
 
-from ezspanner.helper import NOT_PROVIDED, Empty
+from .helper import NOT_PROVIDED, Empty
 
 
 class SpannerField(object):

@@ -325,7 +325,7 @@ class SpannerModelBase(type):
 
         # convert primary key field list/tuple to PrimaryKey index
         if isinstance(new_class._meta.pk, (list, tuple)):
-            from ezspanner import PrimaryKey
+            from .indices import PrimaryKey
             new_index = PrimaryKey(fields=new_class._meta.pk)
             new_class.add_to_class(new_index.name, new_index)
 

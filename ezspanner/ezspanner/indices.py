@@ -5,7 +5,7 @@ from collections import OrderedDict
 
 from future.builtins import *
 
-from ezspanner.helper import Empty
+from .helper import Empty
 
 
 class SpannerIndex(object):
