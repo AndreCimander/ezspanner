@@ -336,7 +336,7 @@ class SpannerModelBase(type):
         # register class in registry (if not abstract)
         if not new_class._meta.abstract:
             SpannerModelRegistry.register(new_class)
-        
+        setattr(new_class, 'objects', SpannerQueryset(new_class))
         new_class._prepare()
         return new_class
 
@@ -585,10 +585,3 @@ class SpannerModel(six.with_metaclass(SpannerModelBase)):
         }
 
         return pk_data
-
-    # helper methods for create / drop
-    #
-
-    @property
-    def objects(self):
-        return SpannerQueryset(self)
