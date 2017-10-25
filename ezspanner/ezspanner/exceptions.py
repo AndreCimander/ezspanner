@@ -14,6 +14,10 @@ class ModelError(EzSpannerException):
     pass
 
 
+class QueryError(EzSpannerException):
+    pass
+
+
 class FieldError(ModelError):
     pass
 
