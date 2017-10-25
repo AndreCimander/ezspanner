@@ -15,6 +15,9 @@ class SpannerQuerysetTests(TestCase):
         qs = qs.index('over9000')
         self.assertEqual(qs.selected_index, 'over9000')
 
+        self.assertEqual(qs._build_table_name(qs.model, qs.selected_index),
+                         '`%s`@{FORCE_INDEX=over9000}' % TestModelB._meta.table)
+
     def test_invalid_index(self):
         qs = TestModelB().objects
         self.assertRaises(SpannerIndexError, qs.index, 'nope')
@@ -28,8 +31,20 @@ class SpannerQuerysetTests(TestCase):
         self.assertEqual(len(qs.selected_fields[TestModelB]), 2)
 
         # test reset
-        qs = qs.values()
+        qs = qs.values(None)
         self.assertEqual(len(qs.selected_fields.keys()), 0)
 
         # test invalid field
         self.assertRaises(ModelError, qs.values, 'nope_field')
+
+        # todo: test reset with joined model
+        # todo: test reset with all
+
+    def test_columns(self):
+        qs = TestModelB.objects
+        # if nothing is set: return all columns
+        columns = qs._get_select_columns()
+        self.assertEqual(len(columns), 5)
+        self.assertEqual(columns[0], '`model_b`.`id_a`')
+        self.assertEqual(columns[1], '`model_b`.`id_b`')
+        self.assertEqual(columns[4], '`model_b`.`value_field_z`')
