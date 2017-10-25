@@ -357,6 +357,9 @@ class SpannerModelBase(type):
 
 class SpannerModel(six.with_metaclass(SpannerModelBase)):
 
+    # default queryset to shut automatic code analysis up
+    objects = SpannerQueryset()
+
     def __init__(self, *args, **kwargs):
         # Set up the storage for instance state
         self._state = ModelState()
