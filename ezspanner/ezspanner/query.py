@@ -3,8 +3,11 @@ from __future__ import absolute_import, division, print_function, unicode_litera
 
 import copy
 from collections import OrderedDict
+
+import six
 from six import iteritems
 
+from ezspanner.query_utils import LOOKUP_SEP, Q
 from .exceptions import ModelError, SpannerIndexError, QueryError
 from .connection import Connection
 
@@ -24,6 +27,22 @@ class SpannerQueryset(object):
         self.joins = OrderedDict()
         self.selected_index = None
         self.selected_fields = OrderedDict()
+        self.filter_conditions = OrderedDict()
+        self.where = None
+
+        self._result_cache = None
+
+    def __deepcopy__(self, memo):
+        """
+        Deep copy of a QuerySet doesn't populate the cache
+        """
+        obj = self.__class__()
+        for k, v in self.__dict__.items():
+            if k == '_result_cache':
+                obj.__dict__[k] = None
+            else:
+                obj.__dict__[k] = copy.deepcopy(v, memo)
+        return obj
 
     def index(self, index_name):
         """
@@ -32,7 +51,7 @@ class SpannerQueryset(object):
         :param index_name:
         :rtype: SpannerQueryset
         """
-        self = copy.copy(self)
+        self = copy.deepcopy(self)
         # check if index exists
         if not self.model._meta.index_lookup.get(index_name) and index_name != '_BASE_TABLE':
             raise SpannerIndexError("invalid index specified! '%s' is not a valid index name for model '%s'" %
@@ -53,7 +72,7 @@ class SpannerQueryset(object):
 
         :rtype: SpannerQueryset
         """
-        self = copy.copy(self)
+        self = copy.deepcopy(self)
         return self
 
     def _reset_values(self, model=None, reset_all=False):
@@ -73,7 +92,7 @@ class SpannerQueryset(object):
 
         :rtype: SpannerQueryset
         """
-        self = copy.copy(self)
+        self = copy.deepcopy(self)
 
         # check if model is already joined
         self._check_model_joined(kwargs.get('model'))
@@ -92,7 +111,7 @@ class SpannerQueryset(object):
 
         return self
 
-    def filter(self, model=None, **kwargs):
+    def filter_old(self, model=None, **kwargs):
         """
 
         :param model:
@@ -100,13 +119,75 @@ class SpannerQueryset(object):
 
         :rtype: SpannerQueryset
         """
-        self = copy.copy(self)
+        self = copy.deepcopy(self)
 
         # check if model is already joined
         self._check_model_joined(model)
         model = model or self.model
+        
+        if self.filter_conditions.get(model) is None:
+            self.filter_conditions = []
+        for key, value in iteritems(kwargs):
+            key_split = key.rsplit(LOOKUP_SEP, 1)
 
-        # todo: implement filter query commands -> __gte, __gt, __lte, __lt, __in
+            key = key.rsplit(LOOKUP_SEP, 1)[0]
+            op = key_split[1] if len(key_split) == 2 else 'eq'
+            op_type = FilterRegistry.registered_types.get(op)
+
+            if not op_type:
+                raise QueryError("unregistered filter op type '%s'" % op)
+
+            self.filter_conditions[model].append({
+                'field': key,
+                'value': value,
+                'type': op_type
+            })
+
+        return self
+
+    def filter(self, *args, **kwargs):
+        """
+        Returns a new QuerySet instance with the args ANDed to the existing
+        set.
+        """
+        return self.filter_and(*args, **kwargs)
+
+    def filter_and(self, *args, **kwargs):
+        """
+        Returns a new QuerySet instance with the args ANDed to the existing
+        set.
+        """
+        return self._filter_or_exclude(False, True, *args, **kwargs)
+
+    def filter_or(self, *args, **kwargs):
+        """
+        Returns a new QuerySet instance with the args ORed to the existing
+        set.
+        """
+        return self._filter_or_exclude(False, False, *args, **kwargs)
+
+    def exclude(self, *args, **kwargs):
+        """
+        Returns a new QuerySet instance with NOT (args) ANDed to the existing
+        set.
+        """
+        return self._filter_or_exclude(True, True, *args, **kwargs)
+
+    def _filter_or_exclude(self, negate, op_and, *args, **kwargs):
+        self = copy.deepcopy(self)
+        if negate:
+            q_obj = ~Q(*args, **kwargs)
+        else:
+            q_obj = Q(*args, **kwargs)
+
+        if not self.where:
+            self.where = q_obj
+        else:
+            if op_and:
+                self.where = self.where & q_obj
+            else:
+                self.where = self.where | q_obj
+
         return self
 
     def set_connection(self, connection_id):
@@ -117,7 +198,7 @@ class SpannerQueryset(object):
 
         :rtype: SpannerQueryset
         """
-        self = copy.copy(self)
+        self = copy.deepcopy(self)
         self.conn = Connection.get(connection_id)
         return self
 
@@ -129,7 +210,7 @@ class SpannerQueryset(object):
 
         :rtype: SpannerQueryset
         """
-        self = copy.copy(self)
+        self = copy.deepcopy(self)
         return self
 
     def aggregate(self, *args, **kwargs):
@@ -140,7 +221,7 @@ class SpannerQueryset(object):
 
         :rtype: SpannerQueryset
         """
-        self = copy.copy(self)
+        self = copy.deepcopy(self)
         return self
 
     def get(self, **filter_kwargs):
@@ -187,7 +268,12 @@ class SpannerQueryset(object):
         if index:
             table += '@{FORCE_INDEX=%s}' % index
         return table
-
+    
+    def _build_where(self):
+        where = ''
+        
+        return where
+    
     @property
     def query(self):
         """
@@ -203,15 +289,69 @@ class SpannerQueryset(object):
         :param connection_id:
         :param transaction:
         :param fetch_one:
-
-        :rtype: SpannerQueryset
         """
         self = self.set_connection(connection_id)
 
         if transaction:
             self.conn.run_in_transaction(self.run_in_transaction)
 
-        return self
-
     def run_in_transaction(self, transaction):
         pass
+
+
+class FilterRegistry(object):
+
+    registered_types = dict()
+
+    @classmethod
+    def register(cls, filter_class):
+        if cls.registered_types.get(filter_class.operator) is not None:
+            raise ValueError("Filter operator '%s' is already taken by '%s'" %
+                             (filter_class.operator, cls.registered_types[filter_class.operator]))
+        cls.registered_types[filter_class.operator] = filter_class
+
+
+class FilterMeta(type):
+
+    def __new__(cls, name, bases, attrs):
+        super_new = super(FilterMeta, cls).__new__
+
+        # Also ensure initialization is only performed for subclasses of FilterBase
+        # (excluding Model class itself).
+        parents = [b for b in bases if isinstance(b, FilterBase)]
+        if not parents:
+            return super_new(cls, name, bases, attrs)
+
+        # Create the class.
+        module = attrs.pop('__module__')
+        new_class = super_new(cls, name, bases, {'__module__': module})
+
+        # register filter
+        FilterRegistry.register(new_class)
+
+        return new_class
+
+
+class FilterBase(six.with_metaclass(FilterMeta)):
+    operator = None
+
+    @classmethod
+    def as_sql(cls, qs, field, value):
+        raise NotImplementedError
+
+
+class FilterEquals(FilterBase):
+    operator = 'eq'
+
+    @classmethod
+    def as_sql(cls, qs, field, value):
+        # todo: place validated/transformed value into qs param replacement
+        return '`{0}` = @{0}'.format(field.name)
+
+
+class FilterGte(FilterBase):
+    operator = 'gte'
+
+
+class FilterGt(FilterBase):
+    operator = 'gt'
