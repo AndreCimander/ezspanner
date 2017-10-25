@@ -29,7 +29,7 @@ class SpannerQueryset(object):
         self.selected_fields = OrderedDict()
         self.filter_conditions = OrderedDict()
         self.where = None
-
+        self.params = {}
         self._result_cache = None
 
     def __deepcopy__(self, memo):
@@ -61,10 +61,11 @@ class SpannerQueryset(object):
         self.selected_index = index_name
         return self
 
-    def join(self, table, join_type=JOIN_INNER, join_index=None, *select_fields, **join_on_fields):
+    def join(self, model, model_alias=None, join_type=JOIN_INNER, join_index=None, *select_fields, **join_on_fields):
         """
 
-        :param table:
+        :param model:
+        :param model_alias:
         :param join_type:
         :param join_index:
         :param select_fields:
@@ -80,6 +81,15 @@ class SpannerQueryset(object):
             self.selected_fields = OrderedDict()
         elif self.selected_fields.get(model) is not None:
             del self.selected_fields[model]
+
+    def add_param(self, field, value):
+        param_id = field.name
+        i = 0
+        while self.params.get(param_id) is not None:
+            i += 1
+            param_id = field.name+'_'+str(i)
+        self.params[param_id] = {'value': value, 'type': field.get_spanner_type()}
+        return param_id
 
     def values(self, *fields, **kwargs):
         """
@@ -271,8 +281,38 @@ class SpannerQueryset(object):
     
     def _build_where(self):
         where = ''
-        
+        if self.where:
+            where = 'WHERE ' + self._resolve_q(self.where)
+
         return where
+
+    def _resolve_q(self, q):
+        connector = q.connector
+
+        model = q.model or self.model
+
+        sql_fragments = []
+        for child in q.children:
+            if isinstance(child, Q):
+                sql_fragments.append('(' + self._resolve_q(child) + ')')
+            else:
+                column, value = child
+                column_split = column.rsplit(LOOKUP_SEP, 1)
+
+                # extract filter op type
+                column = column_split[0]
+                op = column_split[1] if len(column_split) == 2 else 'eq'
+                op_type = FilterRegistry.registered_types.get(op)
+                if not op_type:
+                    raise QueryError("unregistered filter op type '%s'" % op)
+
+                # get field
+                field = model._meta.field_lookup[column]
+
+                # build filter clause and append
+                sql_fragments.append(op_type.as_sql(self, field, value))
+
+        return (' %s ' % connector).join(sql_fragments)
     
     @property
     def query(self):
@@ -298,6 +338,10 @@ class SpannerQueryset(object):
     def run_in_transaction(self, transaction):
         pass
 
+#
+# QUERY FILTERS
+#
+
 
 class FilterRegistry(object):
 
@@ -305,6 +349,9 @@ class FilterRegistry(object):
 
     @classmethod
     def register(cls, filter_class):
+        if filter_class.operator is None:
+            return
+
         if cls.registered_types.get(filter_class.operator) is not None:
             raise ValueError("Filter operator '%s' is already taken by '%s'" %
                              (filter_class.operator, cls.registered_types[filter_class.operator]))
@@ -318,13 +365,17 @@ class FilterMeta(type):
 
         # Also ensure initialization is only performed for subclasses of FilterBase
         # (excluding Model class itself).
-        parents = [b for b in bases if isinstance(b, FilterBase)]
+        parents = [b for b in bases if isinstance(b, FilterMeta)]
         if not parents:
             return super_new(cls, name, bases, attrs)
 
         # Create the class.
         module = attrs.pop('__module__')
         new_class = super_new(cls, name, bases, {'__module__': module})
+
+        # add attributes
+        for obj_name, obj in attrs.items():
+            setattr(new_class, obj_name, obj)
 
         # register filter
         FilterRegistry.register(new_class)
@@ -345,8 +396,10 @@ class FilterEquals(FilterBase):
 
     @classmethod
     def as_sql(cls, qs, field, value):
-        # todo: place validated/transformed value into qs param replacement
-        return '`{0}` = @{0}'.format(field.name)
+        # todo: add support for F(model|'model_alias', 'field_id')
+        # todo: support alias of model in case of multiple joins
+        param_placeholder = qs.add_param(field, value)
+        return '`{0}`.`{1}` = @{2}'.format(field.model._meta.table, field.name, param_placeholder)
 
 
 class FilterGte(FilterBase):

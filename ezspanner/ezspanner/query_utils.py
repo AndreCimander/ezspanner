@@ -22,6 +22,7 @@ class Node(object):
         used.
         """
         self.children = children[:] if children else []
+        self.model = None
         self.connector = connector or self.default
         self.negated = negated
 
