@@ -1,13 +1,10 @@
 # -*- coding: utf-8 -*-
 from __future__ import absolute_import, division, print_function, unicode_literals
-
 import copy
-from collections import OrderedDict
-
+from collections import OrderedDict, defaultdict
 import six
-from six import iteritems
 
-from ezspanner.query_utils import LOOKUP_SEP, Q
+from ezspanner.query_utils import LOOKUP_SEP, Q, F
 from .exceptions import ModelError, SpannerIndexError, QueryError
 from .connection import Connection
 
@@ -30,7 +27,13 @@ class SpannerQueryset(object):
         self.filter_conditions = OrderedDict()
         self.where = None
         self.params = {}
+
+        self.field_lookup = defaultdict(list)
+
         self._result_cache = None
+
+        if model:
+            self._discover_columns(model)
 
     def __deepcopy__(self, memo):
         """
@@ -43,6 +46,20 @@ class SpannerQueryset(object):
             else:
                 obj.__dict__[k] = copy.deepcopy(v, memo)
         return obj
+
+    def _discover_columns(self, model):
+        for field in model._meta.local_fields:
+            self.field_lookup[field.name].append(model)
+
+    def is_column_ambiguous_or_unknown(self, column):
+        if len(self.field_lookup[column]) == 0:
+            raise QueryError("Field '%s' is unknown!" % column)
+        if len(self.field_lookup[column]) > 1:
+            raise QueryError("Field '%s' is ambiguous, you must specify a model/model alias!" % column)
+
+    def get_model_for_column(self, column):
+        self.is_column_ambiguous_or_unknown(column)
+        return self.field_lookup[column][0]
 
     def index(self, index_name):
         """
@@ -61,19 +78,55 @@ class SpannerQueryset(object):
         self.selected_index = index_name
         return self
 
-    def join(self, model, model_alias=None, join_type=JOIN_INNER, join_index=None, *select_fields, **join_on_fields):
+    def join(self, model, model_alias=None, join_type=JOIN_INNER, join_index=None, fields=None, on=None):
         """
 
         :param model:
         :param model_alias:
         :param join_type:
         :param join_index:
-        :param select_fields:
-        :param join_on_fields:
+        :param fields:
+
+        :type on: dict
+        :param on: supply a dictionary|OrderedDict containing key, value pairs of join-fields.
+        The dict's keys will be mapped to the joined Model, the value must be supplied as a F instance if you don't
+        want to use a concrete value.
+
+        Example:
+        on=dict(id_a=F(OtherModel, 'id_a'))
 
         :rtype: SpannerQueryset
         """
         self = copy.deepcopy(self)
+        if self.joins.get(model) and not model_alias:
+            raise QueryError("Model '%s' was already used for a join, supply a model_alias." % model)
+        if model_alias is not None and (not isinstance(model_alias, six.string_types) or len(model_alias) == 0):
+            raise QueryError("Model alias '%s' must be a non-empty string!" % model_alias)
+        if model_alias and self.joins.get(model_alias):
+            raise QueryError("Model alias '%s' already taken in this query!" % model_alias)
+
+        if not isinstance(on, (dict, OrderedDict)) or not on:
+            raise QueryError("You must supply a join dictionary for `on` ")
+
+        # discover columns
+        self._discover_columns(model)
+
+        model_id = model_alias or model
+
+        # todo: analyze join_on_fields, construct Q query with correct F() fields
+        join_on = []
+        for key, value in six.iteritems(on):
+            join_on.append((F(model, key), value))
+
+        self.joins[model_id] = {
+            'type': join_type,
+            'index': join_index,
+            'model': model,
+            'alias': model_alias,
+            'fields': fields,
+            'join_on': join_on
+        }
+
         return self
 
     def _reset_values(self, model=None, reset_all=False):
@@ -137,7 +190,7 @@ class SpannerQueryset(object):
         
         if self.filter_conditions.get(model) is None:
             self.filter_conditions = []
-        for key, value in iteritems(kwargs):
+        for key, value in six.iteritems(kwargs):
             key_split = key.rsplit(LOOKUP_SEP, 1)
 
             key = key.rsplit(LOOKUP_SEP, 1)[0]
@@ -190,6 +243,9 @@ class SpannerQueryset(object):
         else:
             q_obj = Q(*args, **kwargs)
 
+        # allow the Q instance to check for F fields to make sure that we have don't use ambiguous column names
+        q_obj.verify(self)
+
         if not self.where:
             self.where = q_obj
         else:
@@ -210,6 +266,16 @@ class SpannerQueryset(object):
         """
         self = copy.deepcopy(self)
         self.conn = Connection.get(connection_id)
+        return self
+
+    def group_by(self):
+        """
+        Add group by clause
+
+        :rtype: SpannerQueryset
+        """
+        self = copy.deepcopy(self)
+        # todo: implement group by
         return self
 
     def annotate(self, *args, **kwargs):
@@ -253,25 +319,31 @@ class SpannerQueryset(object):
         else:
             columns = []
 
-        for model, columns in iteritems(self.selected_fields):
+        for model, columns in six.iteritems(self.selected_fields):
             columns.extend(['`%s`.`%s`' % (model._meta.table, f.name) for f in self.model._meta.local_fields])
 
         return columns
 
     def _build_query(self):
-        columns = self._get_select_columns()
+        query_fragments = []
 
-        query = "SELECT `%(columns)s` \n" \
-                "FROM %(table)s \n" \
-                "%(joins)s" \
-                "%(where)s" \
-                % {
-                    'table': self._build_table_name(self.model, self.selected_index),
-                    'columns': ','.join(columns),
-                    'joins': '',
-                    'where': '',
-                }
-        return query
+        # SELECT
+        columns = self._get_select_columns()
+        query_fragments.append("SELECT `%s`" % ','.join(columns))
+
+        # FROM
+        query_fragments.append("FROM %s" % self._build_table_name(self.model, self.selected_index))
+
+        # JOIN
+        if self.joins:
+            pass
+
+        # WHERE
+        where = self._build_where()
+        if where:
+            query_fragments.append(where)
+
+        return '\n'.join(query_fragments)
 
     def _build_table_name(self, model, index):
         table = '`%s`' % model._meta.table
@@ -287,6 +359,14 @@ class SpannerQueryset(object):
         return where
 
     def _resolve_q(self, q):
+        """
+        Helper method to recursively resolve a Q tree.
+
+        :type q: Q
+
+        :rtype: unicode
+        :return: filter condition string
+        """
         connector = q.connector
 
         model = q.model or self.model
@@ -312,7 +392,10 @@ class SpannerQueryset(object):
                 # build filter clause and append
                 sql_fragments.append(op_type.as_sql(self, field, value))
 
-        return (' %s ' % connector).join(sql_fragments)
+        sql = (' %s ' % connector).join(sql_fragments)
+        if q.negated:
+            sql = ' NOT (%s) ' % sql
+        return sql
     
     @property
     def query(self):
@@ -396,10 +479,12 @@ class FilterEquals(FilterBase):
 
     @classmethod
     def as_sql(cls, qs, field, value):
-        # todo: add support for F(model|'model_alias', 'field_id')
-        # todo: support alias of model in case of multiple joins
-        param_placeholder = qs.add_param(field, value)
-        return '`{0}`.`{1}` = @{2}'.format(field.model._meta.table, field.name, param_placeholder)
+        if isinstance(value, F):
+            return '`{0}`.`{1}` = {2}'.format(field.model._meta.table, field.name, F)
+        else:
+            # todo: support alias of model in case of multiple joins
+            param_placeholder = qs.add_param(field, value)
+            return '`{0}`.`{1}` = @{2}'.format(field.model._meta.table, field.name, param_placeholder)
 
 
 class FilterGte(FilterBase):

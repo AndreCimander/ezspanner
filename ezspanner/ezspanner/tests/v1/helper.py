@@ -33,7 +33,7 @@ class TestModelB(ezspanner.SpannerModel):
     id_b = ezspanner.IntField()
     value_field_x = ezspanner.IntField(null=True)
     value_field_y = ezspanner.IntField(null=True)
-    value_field_z = ezspanner.IntField(null=True)
+    value_field_z = ezspanner.StringField(null=True, length=5)
 
 
 class TestModelC(ezspanner.SpannerModel):

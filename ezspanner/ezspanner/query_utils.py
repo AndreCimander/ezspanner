@@ -181,6 +181,21 @@ class Q(Node):
                 clone.children.append(child)
         return clone
 
+    def verify(self, qs):
+        """
+        Call verify on all Q and F instances.
+
+        :type qs: ezspanner.query.SpannerQuerySet
+        """
+        for child in self.children:
+            if isinstance(child, Q):
+                child.verify(qs)
+            else:
+                key, value = child
+                # make sure to call F's verify
+                if isinstance(value, F):
+                    value.verify(qs)
+
 
 @python_2_unicode_compatible
 class F(object):
@@ -188,13 +203,27 @@ class F(object):
     Use this class to specify field lookups that use a column value instead of a concrete value.
 
     """
+    model_or_alias = None
+
+    def __init__(self, *args):
+        if len(args) == 2:
+            self.model_or_alias = args[0]
+            self.column = args[1]
+        else:
+            # support non-model fields, which work fine if the field is unique
+            self.column = args[0]
+
     def __str__(self):
-        return '`%s`.`%s`' % (self.model_or_alias, self.column)
+        if self.model_or_alias:
+            return '`%s`.`%s`' % (self.model_or_alias, self.column)
+        else:
+            return '`%s`' % self.column
 
-    def __init__(self, model_or_alias, column):
-        self.model_or_alias = model_or_alias
-        self.column = column
-
-    def as_sql(self, qs):
+    def verify(self, qs):
         # todo: lookup/verify model / alias
+        # lookup model/alias for field
+        if not self.model_or_alias:
+            self.model_or_alias = qs.get_model_for_column(self.column)
+
+    def as_sql(self):
         return str(self)
