@@ -1,11 +1,15 @@
 # -*- coding: utf-8 -*-
 from __future__ import absolute_import, division, print_function, unicode_literals
-from future.builtins import *
 
+import copy
+
+from future.builtins import *
+from six import python_2_unicode_compatible
 
 LOOKUP_SEP = '__'
 
 
+@python_2_unicode_compatible
 class Node(object):
     """
     A single internal node in the tree graph. A Node should be viewed as a
@@ -176,3 +180,21 @@ class Q(Node):
             else:
                 clone.children.append(child)
         return clone
+
+
+@python_2_unicode_compatible
+class F(object):
+    """
+    Use this class to specify field lookups that use a column value instead of a concrete value.
+
+    """
+    def __str__(self):
+        return '`%s`.`%s`' % (self.model_or_alias, self.column)
+
+    def __init__(self, model_or_alias, column):
+        self.model_or_alias = model_or_alias
+        self.column = column
+
+    def as_sql(self, qs):
+        # todo: lookup/verify model / alias
+        return str(self)
