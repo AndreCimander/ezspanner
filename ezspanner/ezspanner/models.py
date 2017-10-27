@@ -14,7 +14,7 @@ from google.cloud import spanner
 from .exceptions import ObjectDoesNotExist, FieldError, ModelError
 from .helper import subclass_exception
 from .connection import Connection
-from .query import SpannerQueryset
+from .query import SpannerQuerySet
 from .sql import v1 as sql_v1
 
 
@@ -336,7 +336,7 @@ class SpannerModelBase(type):
         # register class in registry (if not abstract)
         if not new_class._meta.abstract:
             SpannerModelRegistry.register(new_class)
-        setattr(new_class, 'objects', SpannerQueryset(new_class))
+        setattr(new_class, 'objects', SpannerQuerySet(new_class))
         new_class._prepare()
         return new_class
 
@@ -355,10 +355,11 @@ class SpannerModelBase(type):
         opts._prepare(cls)
 
 
+@six.python_2_unicode_compatible
 class SpannerModel(six.with_metaclass(SpannerModelBase)):
 
     # default queryset to shut automatic code analysis up
-    objects = SpannerQueryset()
+    objects = SpannerQuerySet()
 
     def __init__(self, *args, **kwargs):
         # Set up the storage for instance state
@@ -416,6 +417,9 @@ class SpannerModel(six.with_metaclass(SpannerModelBase)):
             if kwargs:
                 raise TypeError("'%s' is an invalid keyword argument for this function" % list(kwargs)[0])
         super(SpannerModel, self).__init__()
+
+    def __str__(self):
+        return '%s<%s>' % (self._class__, self._meta.table)
 
     @classmethod
     def from_db(cls, db, field_names, values):

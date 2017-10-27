@@ -1,20 +1,18 @@
 # -*- coding: utf-8 -*-
 from __future__ import absolute_import, division, print_function, unicode_literals
-
 import copy
-
+import six
 from future.builtins import *
-from six import python_2_unicode_compatible
 
 LOOKUP_SEP = '__'
 
 
-@python_2_unicode_compatible
+@six.python_2_unicode_compatible
 class Node(object):
     """
     A single internal node in the tree graph. A Node should be viewed as a
     connection (the root) with the children being either leaf nodes or other
-    Node instances.
+    Node instances.0
     """
     # Standard connector type. Clients usually won't use this at all and
     # subclasses will usually override the value.
@@ -197,7 +195,7 @@ class Q(Node):
                     value.verify(qs)
 
 
-@python_2_unicode_compatible
+@six.python_2_unicode_compatible
 class F(object):
     """
     Use this class to specify field lookups that use a column value instead of a concrete value.
@@ -215,15 +213,25 @@ class F(object):
 
     def __str__(self):
         if self.model_or_alias:
-            return '`%s`.`%s`' % (self.model_or_alias, self.column)
+            model_or_alias = self.model_or_alias if isinstance(self.model_or_alias, six.string_types) \
+                else self.model_or_alias._meta.table
+
+            return '`%s`.`%s`' % (model_or_alias, self.column)
         else:
             return '`%s`' % self.column
 
     def verify(self, qs):
-        # todo: lookup/verify model / alias
-        # lookup model/alias for field
+        """
+
+        :type qs: ezspanner.query.SpannerQuerySet
+        :return:
+        """
         if not self.model_or_alias:
+            # lookup model/alias for field
             self.model_or_alias = qs.get_model_for_column(self.column)
+        else:
+            # verify model / alias
+            qs._check_model_joined(self.model_or_alias)
 
     def as_sql(self):
         return str(self)

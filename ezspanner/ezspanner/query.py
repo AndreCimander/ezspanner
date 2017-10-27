@@ -10,7 +10,7 @@ from .connection import Connection
 
 
 # noinspection PyMethodFirstArgAssignment
-class SpannerQueryset(object):
+class SpannerQuerySet(object):
 
     JOIN_LEFT = 'LEFT'
     JOIN_RIGHT = 'RIGHT'
@@ -22,10 +22,14 @@ class SpannerQueryset(object):
         self.model = model
         self.conn = None
         self.joins = OrderedDict()
+        # allows to force-select an index for the self.model table.
         self.selected_index = None
+        # keeps track which fields from which models should be returned
         self.selected_fields = OrderedDict()
-        self.filter_conditions = OrderedDict()
+        # WHERE clause filter conditions
         self.where = None
+
+        # param storage for later concrete value injection, keeps track of replacement_key and value.
         self.params = {}
 
         self.field_lookup = defaultdict(list)
@@ -52,12 +56,26 @@ class SpannerQueryset(object):
             self.field_lookup[field.name].append(model)
 
     def is_column_ambiguous_or_unknown(self, column):
+        """
+
+        :param column:
+
+        :raises QueryError: if column is ambiguous or not found.
+        """
         if len(self.field_lookup[column]) == 0:
             raise QueryError("Field '%s' is unknown!" % column)
         if len(self.field_lookup[column]) > 1:
             raise QueryError("Field '%s' is ambiguous, you must specify a model/model alias!" % column)
 
     def get_model_for_column(self, column):
+        """
+        Return model instance for column. If the column exists in more than one queried model
+
+        :param column:
+        :raises QueryError: if column is ambiguous or not found.
+
+        :rtype: ezspanner.models.SpannerModel
+        """
         self.is_column_ambiguous_or_unknown(column)
         return self.field_lookup[column][0]
 
@@ -66,7 +84,7 @@ class SpannerQueryset(object):
         Force index usage for base query model.
 
         :param index_name:
-        :rtype: SpannerQueryset
+        :rtype: SpannerQuerySet
         """
         self = copy.deepcopy(self)
         # check if index exists
@@ -95,9 +113,11 @@ class SpannerQueryset(object):
         Example:
         on=dict(id_a=F(OtherModel, 'id_a'))
 
-        :rtype: SpannerQueryset
+        :rtype: SpannerQuerySet
         """
         self = copy.deepcopy(self)
+        if not model:
+            raise QueryError("You must specify a model as first parameter!")
         if self.joins.get(model) and not model_alias:
             raise QueryError("Model '%s' was already used for a join, supply a model_alias." % model)
         if model_alias is not None and (not isinstance(model_alias, six.string_types) or len(model_alias) == 0):
@@ -111,14 +131,20 @@ class SpannerQueryset(object):
         # discover columns
         self._discover_columns(model)
 
-        model_id = model_alias or model
+        # get identifier
+        model_identifier = model_alias or model
 
-        # todo: analyze join_on_fields, construct Q query with correct F() fields
+        # analyze on, construct Q query with correct F() fields
         join_on = []
         for key, value in six.iteritems(on):
-            join_on.append((F(model, key), value))
+            join_on.append((F(model_identifier, key), value))
+        join_on = Q(*join_on)
 
-        self.joins[model_id] = {
+        # analyze fields, if empty select all fields from joined model
+        # if we haven't specified any fields we select all columns from the joined table
+        self._set_values(model_identifier, fields)
+
+        self.joins[model_identifier] = {
             'type': join_type,
             'index': join_index,
             'model': model,
@@ -146,6 +172,7 @@ class SpannerQueryset(object):
 
     def values(self, *fields, **kwargs):
         """
+        Set return values for this queryset.
 
         Reset fields with single None argument, e.g. .values(None), you can use the keyword argument reset_all=True to
         also reset all field selections from joins.
@@ -153,60 +180,40 @@ class SpannerQueryset(object):
         :param fields:
         :param kwargs:
 
-        :rtype: SpannerQueryset
+        :rtype: SpannerQuerySet
         """
         self = copy.deepcopy(self)
+        self._set_values(fields, **kwargs)
+        return self
 
+    def _set_values(self, fields, model_or_alias=None, reset_all=False):
+        """
+
+        :type fields: list[F|unicode]|tuple[F|unicode]
+        :param model_or_alias:
+        :param reset_all:
+        :return:
+        """
         # check if model is already joined
-        self._check_model_joined(kwargs.get('model'))
-        model = kwargs.get('model') or self.model
+        model = self._check_model_joined(model_or_alias or self.model)
 
         # empty fields -> reset value selection
         if len(fields) == 1 and fields[0] is None:
-            self._reset_values(model=model, reset_all=kwargs.get('reset_all', False))
+            self._reset_values(model=model, reset_all=reset_all)
             return self
 
+        # make sure that selected fields exist
+        new_fields = []
         for f in fields:
-            if not model._meta.field_lookup.get(f):
-                raise ModelError("'%s' is an invalid field for model '%s'" % (f, model))
-
-        self.selected_fields[model] = set(fields)
-
-        return self
-
-    def filter_old(self, model=None, **kwargs):
-        """
-
-        :param model:
-        :param kwargs:
-
-        :rtype: SpannerQueryset
-        """
-        self = copy.deepcopy(self)
-
-        # check if model is already joined
-        self._check_model_joined(model)
-        model = model or self.model
-        
-        if self.filter_conditions.get(model) is None:
-            self.filter_conditions = []
-        for key, value in six.iteritems(kwargs):
-            key_split = key.rsplit(LOOKUP_SEP, 1)
-
-            key = key.rsplit(LOOKUP_SEP, 1)[0]
-            op = key_split[1] if len(key_split) == 2 else 'eq'
-            op_type = FilterRegistry.registered_types.get(op)
-
-            if not op_type:
-                raise QueryError("unregistered filter op type '%s'" % op)
-
-            self.filter_conditions[model].append({
-                'field': key,
-                'value': value,
-                'type': op_type
-            })
-
-        return self
+            # convert to column names to F instance
+            if not isinstance(f, F):
+                if not model._meta.field_lookup.get(f):
+                    raise ModelError("'%s' is an invalid field for model '%s'" % (f, model))
+                f = F(model_or_alias, f)
+            new_fields.append(f)
+        # append fields to existing selection
+        existing_fields = self.selected_fields.get(model, [])
+        self.selected_fields[model] = list(set(existing_fields + new_fields))
 
     def filter(self, *args, **kwargs):
         """
@@ -262,7 +269,7 @@ class SpannerQueryset(object):
 
         :param connection_id:
 
-        :rtype: SpannerQueryset
+        :rtype: SpannerQuerySet
         """
         self = copy.deepcopy(self)
         self.conn = Connection.get(connection_id)
@@ -272,7 +279,7 @@ class SpannerQueryset(object):
         """
         Add group by clause
 
-        :rtype: SpannerQueryset
+        :rtype: SpannerQuerySet
         """
         self = copy.deepcopy(self)
         # todo: implement group by
@@ -284,7 +291,7 @@ class SpannerQueryset(object):
         :param args:
         :param kwargs:
 
-        :rtype: SpannerQueryset
+        :rtype: SpannerQuerySet
         """
         self = copy.deepcopy(self)
         return self
@@ -295,7 +302,7 @@ class SpannerQueryset(object):
         :param args:
         :param kwargs:
 
-        :rtype: SpannerQueryset
+        :rtype: SpannerQuerySet
         """
         self = copy.deepcopy(self)
         return self
@@ -308,19 +315,35 @@ class SpannerQueryset(object):
         qs.execute(fetch_one=True)
 
     def _check_model_joined(self, model):
-        if model and model != self.model and self.joins.get(model) is None:
-            raise QueryError("Model '%s' is not yet joined")
+        """
+
+        :type model: ezspanner.models.SpannerModel|unicode
+        :rtype: ezspanner.models.SpannerModel
+        """
+        if not model:
+            raise QueryError("No mode specified?!")
+
+        # base table is always joined :-)
+        if model == self.model:
+            return model
+
+        # check model / alias
+        model = self.joins.get(model)
+        if model is None:
+            raise QueryError("Model/alias '%s' is unknown")
+
+        return model
 
     def _get_select_columns(self):
 
         # if base model fields are not defined: select all fields
+        columns = []
         if self.selected_fields.get(self.model) is None:
-            columns = ['`%s`.`%s`' % (self.model._meta.table, f.name) for f in self.model._meta.local_fields]
-        else:
-            columns = []
+            columns = [str(F(self.model._meta.table, f.name)) for f in self.model._meta.local_fields]
 
-        for model, columns in six.iteritems(self.selected_fields):
-            columns.extend(['`%s`.`%s`' % (model._meta.table, f.name) for f in self.model._meta.local_fields])
+        # additional fields from joins
+        for model_or_alias, columns in six.iteritems(self.selected_fields):
+            columns.extend([str(f) for f in columns])
 
         return columns
 
@@ -480,7 +503,7 @@ class FilterEquals(FilterBase):
     @classmethod
     def as_sql(cls, qs, field, value):
         if isinstance(value, F):
-            return '`{0}`.`{1}` = {2}'.format(field.model._meta.table, field.name, F)
+            return '`{0}`.`{1}` = {2!s}'.format(field.model._meta.table, field.name, value)
         else:
             # todo: support alias of model in case of multiple joins
             param_placeholder = qs.add_param(field, value)
