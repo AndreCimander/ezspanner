@@ -352,7 +352,7 @@ class SpannerQuerySet(object):
 
         # SELECT
         columns = self._get_select_columns()
-        query_fragments.append("SELECT `%s`" % ','.join(columns))
+        query_fragments.append("SELECT %s" % ','.join(columns))
 
         # FROM
         query_fragments.append("FROM %s" % self._build_table_name(self.model, self.selected_index))
