@@ -503,6 +503,17 @@ class FilterEquals(FilterBase):
 
     @classmethod
     def as_sql(cls, qs, field, value):
+        """
+
+        :type qs: ezspanner.query.SpannerQuerySet
+        :param qs:
+
+        :type field: ezspanner.fields.SpannerField
+        :param field:
+
+        :param value:
+        :return:
+        """
         if isinstance(value, F):
             return '`{0}`.`{1}` {op} {2!s}'.format(field.model._meta.table, field.name, value, op=cls.sql_op)
         else:
