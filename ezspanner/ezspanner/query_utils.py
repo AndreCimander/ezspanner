@@ -220,6 +220,9 @@ class F(object):
         else:
             return '`%s`' % self.column
 
+    def __repr__(self):
+        return '%s: %s.%s' % (self.__class__.__name__, self.model_or_alias, self.column)
+
     def __eq__(self, other):
         return isinstance(other, F) and self.model_or_alias == other.model_or_alias and self.column == other.column
 

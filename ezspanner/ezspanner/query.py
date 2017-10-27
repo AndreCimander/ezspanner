@@ -4,19 +4,20 @@ import copy
 from collections import OrderedDict, defaultdict
 import six
 
+from ezspanner.fields import SpannerField
 from ezspanner.query_utils import LOOKUP_SEP, Q, F
-from .exceptions import ModelError, SpannerIndexError, QueryError
+from .exceptions import ModelError, SpannerIndexError, QueryError, QueryJoinError
 from .connection import Connection
 
 
 # noinspection PyMethodFirstArgAssignment
 class SpannerQuerySet(object):
 
-    JOIN_LEFT = 'LEFT'
-    JOIN_RIGHT = 'RIGHT'
-    JOIN_INNER = 'INNER'
-    JOIN_CROSS = 'CROSS'
-    JOIN_FULL = 'FULL'
+    JOIN_LEFT = 'LEFT JOIN'
+    JOIN_RIGHT = 'RIGHT JOIN'
+    JOIN_INNER = 'INNER JOIN'
+    JOIN_CROSS = 'CROSS JOIN'
+    JOIN_FULL = 'FULL JOIN'
 
     def __init__(self, model=None):
         self.model = model
@@ -96,13 +97,12 @@ class SpannerQuerySet(object):
         self.selected_index = index_name
         return self
 
-    def join(self, model, model_alias=None, join_type=JOIN_INNER, join_index=None, fields=None, on=None):
+    def join(self, model, alias=None, join_type=JOIN_INNER, fields=None, on=None):
         """
 
         :param model:
-        :param model_alias:
+        :param alias: alias name of model to allow multiple joins of the same table
         :param join_type:
-        :param join_index:
         :param fields:
 
         :type on: dict
@@ -117,13 +117,13 @@ class SpannerQuerySet(object):
         """
         self = copy.deepcopy(self)
         if not model:
-            raise QueryError("You must specify a model as first parameter!")
-        if self.joins.get(model) and not model_alias:
-            raise QueryError("Model '%s' was already used for a join, supply a model_alias." % model)
-        if model_alias is not None and (not isinstance(model_alias, six.string_types) or len(model_alias) == 0):
-            raise QueryError("Model alias '%s' must be a non-empty string!" % model_alias)
-        if model_alias and self.joins.get(model_alias):
-            raise QueryError("Model alias '%s' already taken in this query!" % model_alias)
+            raise QueryJoinError("You must specify a model as first parameter!")
+        if self.joins.get(model) and not alias:
+            raise QueryJoinError("Model '%s' was already used for a join, supply a alias." % model)
+        if alias is not None and (not isinstance(alias, six.string_types) or len(alias) == 0):
+            raise QueryJoinError("Model alias '%s' must be a non-empty string!" % alias)
+        if alias and self.joins.get(alias):
+            raise QueryJoinError("Model alias '%s' already taken in this query!" % alias)
 
         if not isinstance(on, (dict, OrderedDict)) or not on:
             raise QueryError("You must supply a join dictionary for `on` ")
@@ -132,7 +132,7 @@ class SpannerQuerySet(object):
         self._discover_columns(model)
 
         # get identifier
-        model_identifier = model_alias or model
+        model_identifier = alias or model
 
         # analyze on, construct Q query with correct F() fields
         join_on = []
@@ -140,17 +140,21 @@ class SpannerQuerySet(object):
             join_on.append((F(model_identifier, key), value))
         join_on = Q(*join_on)
 
+        # pre-set joined model for check in set_values
+        self.joins[model_identifier] = {
+            'model': model,
+        }
+
         # analyze fields, if empty select all fields from joined model
-        # if we haven't specified any fields we select all columns from the joined table
-        self._set_values(model_identifier, fields)
+        self._set_values(fields or model._meta.get_fields(), model_identifier)
 
         self.joins[model_identifier] = {
             'type': join_type,
-            'index': join_index,
             'model': model,
-            'alias': model_alias,
+            'table': model._meta.table,
+            'alias': alias,
             'fields': fields,
-            'join_on': join_on
+            'on': join_on
         }
 
         return self
@@ -205,15 +209,21 @@ class SpannerQuerySet(object):
         # make sure that selected fields exist
         new_fields = []
         for f in fields:
-            # convert to column names to F instance
+            # convert column names to F instance
             if not isinstance(f, F):
+                f = f.name if isinstance(f, SpannerField) else f
                 if not model._meta.field_lookup.get(f):
                     raise ModelError("'%s' is an invalid field for model '%s'" % (f, model))
                 f = F(model_or_alias, f)
             new_fields.append(f)
         # append fields to existing selection
-        existing_fields = self.selected_fields.get(model, [])
-        self.selected_fields[model] = list(set(existing_fields + new_fields))
+        existing_fields = self.selected_fields.get(model_or_alias, [])
+        self.selected_fields[model_or_alias] = self._list_remove_duplicates(existing_fields + new_fields)
+
+    def _list_remove_duplicates(self, seq):
+        seen = set()
+        seen_add = seen.add
+        return [x for x in seq if not (x in seen or seen_add(x))]
 
     def filter(self, *args, **kwargs):
         """
@@ -330,22 +340,24 @@ class SpannerQuerySet(object):
         # check model / alias
         model = self.joins.get(model)
         if model is None:
-            raise QueryError("Model/alias '%s' is unknown")
+            raise QueryError("Model/alias '%s' is unknown" % model)
 
-        return model
+        return model['model']
 
     def _get_select_columns(self):
-
         # if base model fields are not defined: select all fields
         columns = []
         if self.selected_fields.get(self.model) is None:
             columns = [str(F(self.model._meta.table, f.name)) for f in self.model._meta.local_fields]
 
         # additional fields from joins
-        for model_or_alias, columns in six.iteritems(self.selected_fields):
-            columns.extend([str(f) for f in columns])
+        for model_or_alias, extra_columns in six.iteritems(self.selected_fields):
+            columns.extend([str(f) for f in extra_columns])
 
         return columns
+
+    def _build_select_columns(self):
+        return ', '.join(self._get_select_columns())
 
     def _build_query(self):
         query_fragments = []
@@ -358,8 +370,7 @@ class SpannerQuerySet(object):
         query_fragments.append("FROM %s" % self._build_table_name(self.model, self.selected_index))
 
         # JOIN
-        if self.joins:
-            pass
+        query_fragments.append(self._build_joins())
 
         # WHERE
         where = self._build_where()
@@ -367,6 +378,32 @@ class SpannerQuerySet(object):
             query_fragments.append(where)
 
         return '\n'.join(query_fragments)
+
+    def _build_joins(self):
+        """
+        Create join sql query
+        """
+        query_fragments = []
+        for alias, join_data in six.iteritems(self.joins):
+            query_fragments.append(self._build_join(join_data))
+        return ' '.join(query_fragments)
+
+    def _build_join(self, join_data):
+        """
+        Build single join sql from join_data.
+
+        :type join_data: dict
+        :rtype: unicode
+        """
+        join_sql = ['%s' % join_data['type']]
+
+        join_sql.append('`%s`' % join_data['table'])
+        if join_data.get('alias'):
+            join_sql.append('AS `%s`' % join_data['alias'])
+
+        join_sql.append('ON')
+        join_sql.append(self._resolve_q(join_data['on']))
+        return ' '.join(join_sql)
 
     def _build_table_name(self, model, index):
         table = '`%s`' % model._meta.table
@@ -400,7 +437,13 @@ class SpannerQuerySet(object):
                 sql_fragments.append('(' + self._resolve_q(child) + ')')
             else:
                 column, value = child
-                column_split = column.rsplit(LOOKUP_SEP, 1)
+                column_name = column.column if isinstance(column, F) else column
+
+                # handle/resolve model aliases from F instances
+                model_column_or_alias = column.model_or_alias if isinstance(column, F) else model
+                model_column = self._check_model_joined(model_column_or_alias)
+
+                column_split = column_name.rsplit(LOOKUP_SEP, 1)
 
                 # extract filter op type
                 column = column_split[0]
@@ -410,10 +453,15 @@ class SpannerQuerySet(object):
                     raise QueryError("unregistered filter op type '%s'" % op)
 
                 # get field
-                field = model._meta.field_lookup[column]
+                field = model_column._meta.field_lookup[column]
 
                 # build filter clause and append
-                sql_fragments.append(op_type.as_sql(self, field, value))
+                sql_fragments.append(
+                    op_type.as_sql(
+                        self, field, value,
+                        alias=model_column_or_alias if isinstance(model_column_or_alias, six.string_types) else None
+                    )
+                )
 
         sql = (' %s ' % connector).join(sql_fragments)
         if q.negated:
@@ -502,7 +550,7 @@ class FilterEquals(FilterBase):
     sql_op = '='
 
     @classmethod
-    def as_sql(cls, qs, field, value):
+    def as_sql(cls, qs, field, value, alias=None):
         """
 
         :type qs: ezspanner.query.SpannerQuerySet
@@ -512,14 +560,20 @@ class FilterEquals(FilterBase):
         :param field:
 
         :param value:
+        :param alias: table alias (optional)
         :return:
         """
         if isinstance(value, F):
-            return '`{0}`.`{1}` {op} {2!s}'.format(field.model._meta.table, field.name, value, op=cls.sql_op)
+            return '`{0}`.`{1}` {op} {2!s}'.format(alias or field.model._meta.table,
+                                                   field.name,
+                                                   value,
+                                                   op=cls.sql_op)
         else:
-            # todo: support alias of model in case of multiple joins
             param_placeholder = qs.add_param(field, value)
-            return '`{0}`.`{1}` {op} @{2}'.format(field.model._meta.table, field.name, param_placeholder, op=cls.sql_op)
+            return '`{0}`.`{1}` {op} @{2}'.format(alias or field.model._meta.table,
+                                                  field.name,
+                                                  param_placeholder,
+                                                  op=cls.sql_op)
 
 
 class FilterGte(FilterEquals):

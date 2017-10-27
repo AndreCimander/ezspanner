@@ -18,6 +18,10 @@ class QueryError(EzSpannerException):
     pass
 
 
+class QueryJoinError(QueryError):
+    pass
+
+
 class FieldError(ModelError):
     pass
 
