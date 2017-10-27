@@ -321,6 +321,7 @@ class SpannerQuerySet(object):
         if filter_kwargs:
             qs = self.filter(**filter_kwargs)
 
+        raise NotImplementedError
         # todo: return single instance or raise multiple objects
         qs.execute(fetch_one=True)
 
@@ -486,7 +487,18 @@ class SpannerQuerySet(object):
         """
         self = self.set_connection(connection_id)
 
+        results = self.conn.execute_sql(
+            self.query,
+            params=self.params
+        )
+
+        # todo: build result caching
+        # todo: place fetched values into model instances, also create joined data instances
+        for row in results:
+            yield row
+
         if transaction:
+            raise NotImplementedError
             self.conn.run_in_transaction(self.run_in_transaction)
 
     def run_in_transaction(self, transaction):
