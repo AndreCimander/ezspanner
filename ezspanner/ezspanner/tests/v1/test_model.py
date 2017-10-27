@@ -12,10 +12,11 @@ class SpannerModelTests(TestCase):
 
     def test_get_registered_models_in_correct_order(self):
         sorted_models = list(SpannerModelRegistry.get_registered_models_in_correct_order())
-        self.assertEqual(len(sorted_models), 3)
-        self.assertIsInstance(sorted_models[0], TestModelA)
-        self.assertIsInstance(sorted_models[1], TestModelB)
-        self.assertIsInstance(sorted_models[2], TestModelC)
+        self.assertEqual(len(sorted_models), 4)
+        self.assertEqual(sorted_models[0], TestModelA)
+        self.assertEqual(sorted_models[1], TestModelB)
+        self.assertEqual(sorted_models[2], TestModelD)
+        self.assertEqual(sorted_models[3], TestModelC)
 
     def test_stmt_create(self):
         ddl_statements = SpannerModelRegistry.create_table_statements()
@@ -41,7 +42,7 @@ class SpannerModelTests(TestCase):
 `id_b` INT64 NOT NULL,
 `value_field_x` INT64 NULL,
 `value_field_y` INT64 NULL,
-`value_field_z` INT64 NULL,
+`value_field_z` STRING(5) NULL,
 `id_d` INT64 NOT NULL
 ) PRIMARY KEY (`id_a` , `id_b` ) INTERLEAVE IN `model_a ` ON DELETE CASCADE;""")
 

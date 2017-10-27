@@ -55,7 +55,7 @@ class SpannerQuerysetTests(TestCase):
 
     def test_f(self):
         # test hashing to create sets
-        f_set = set([F('a'), F('a'), F(TestModelB, 'id_b'), F(TestModelB, 'id_b')])
+        f_set = {F('a'), F('a'), F(TestModelB, 'id_b'), F(TestModelB, 'id_b')}
         self.assertEqual(len(f_set), 2)
 
         # todo: test model/alias lookup

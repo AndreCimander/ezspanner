@@ -199,8 +199,8 @@ class SpannerQuerySet(object):
         :return:
         """
         # check if model is already joined
-        model = self._check_model_joined(model_or_alias or self.model)
-
+        model_or_alias = model_or_alias or self.model  # if we don't have an alias: fallback to model
+        model = self._check_model_joined(model_or_alias)
         # empty fields -> reset value selection
         if len(fields) == 1 and fields[0] is None:
             self._reset_values(model=model, reset_all=reset_all)
