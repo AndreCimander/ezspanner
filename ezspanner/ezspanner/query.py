@@ -499,20 +499,33 @@ class FilterBase(six.with_metaclass(FilterMeta)):
 
 class FilterEquals(FilterBase):
     operator = 'eq'
+    sql_op = '='
 
     @classmethod
     def as_sql(cls, qs, field, value):
         if isinstance(value, F):
-            return '`{0}`.`{1}` = {2!s}'.format(field.model._meta.table, field.name, value)
+            return '`{0}`.`{1}` {op} {2!s}'.format(field.model._meta.table, field.name, value, op=cls.sql_op)
         else:
             # todo: support alias of model in case of multiple joins
             param_placeholder = qs.add_param(field, value)
-            return '`{0}`.`{1}` = @{2}'.format(field.model._meta.table, field.name, param_placeholder)
+            return '`{0}`.`{1}` {op} @{2}'.format(field.model._meta.table, field.name, param_placeholder, op=cls.sql_op)
 
 
-class FilterGte(FilterBase):
+class FilterGte(FilterEquals):
     operator = 'gte'
+    sql_op = '>='
 
 
-class FilterGt(FilterBase):
+class FilterGt(FilterEquals):
     operator = 'gt'
+    sql_op = '>='
+
+
+class FilterLte(FilterEquals):
+    operator = 'lte'
+    sql_op = '<='
+
+
+class FilterLt(FilterEquals):
+    operator = 'lt'
+    sql_op = '<'
