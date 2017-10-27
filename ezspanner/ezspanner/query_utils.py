@@ -220,6 +220,15 @@ class F(object):
         else:
             return '`%s`' % self.column
 
+    def __eq__(self, other):
+        return isinstance(other, F) and self.model_or_alias == other.model_or_alias and self.column == other.column
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __hash__(self):
+        return hash(self.model_or_alias) ^ hash(self.column)
+
     def verify(self, qs):
         """
 
