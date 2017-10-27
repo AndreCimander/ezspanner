@@ -51,6 +51,7 @@ class SpannerQuerysetTests(TestCase):
         self.assertEqual(columns[4], '`model_b`.`value_field_z`')
 
     def test_q(self):
+        # todo: test and / or / not
         pass
 
     def test_f(self):

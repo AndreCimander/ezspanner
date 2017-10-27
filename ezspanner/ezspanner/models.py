@@ -1,15 +1,11 @@
 # -*- coding: utf-8 -*-
 from __future__ import absolute_import, division, print_function, unicode_literals
-
 import copy
 import inspect
 from bisect import bisect
 from collections import defaultdict, OrderedDict
-
 import six
 from itertools import chain
-
-from google.cloud import spanner
 
 from .exceptions import ObjectDoesNotExist, FieldError, ModelError
 from .helper import subclass_exception
